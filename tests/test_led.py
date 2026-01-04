@@ -281,7 +281,7 @@ class TestAnimationLock:
     def test_anim_lock_exists(self, led_strip):
         """Should have animation lock."""
         assert led_strip.anim_lock is not None
-        assert isinstance(led_strip.anim_lock, threading.Lock)
+        assert isinstance(led_strip.anim_lock, type(threading.Lock()))
 
     def test_anim_lock_prevents_concurrent_animations(self, led_strip):
         """Should prevent multiple animations from running simultaneously."""
