@@ -1,0 +1,20 @@
+---
+- name: Reboot Raspberry Pi
+  hosts: raspberry_pi
+  become: yes
+
+  tasks:
+    - name: Reboot the system
+      reboot:
+        msg: "Rebooting to apply boot configuration changes"
+        reboot_timeout: 300
+        pre_reboot_delay: 5
+        post_reboot_delay: 30
+
+    - name: Wait for system to come back online
+      wait_for_connection:
+        delay: 30
+        timeout: 300
+
+    - name: Verify system is up
+      ping:

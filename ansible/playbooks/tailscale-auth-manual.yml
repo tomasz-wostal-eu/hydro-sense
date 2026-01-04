@@ -1,0 +1,99 @@
+---
+- name: Manually authenticate Tailscale on Raspberry Pi
+  hosts: raspberry_pi
+  become: yes
+
+  tasks:
+    - name: Check Tailscale installation
+      command: which tailscale
+      register: tailscale_installed
+      failed_when: false
+      changed_when: false
+
+    - name: Fail if Tailscale not installed
+      fail:
+        msg: "Tailscale is not installed. Run 'make tailscale' first."
+      when: tailscale_installed.rc != 0
+
+    - name: Check current Tailscale status
+      command: tailscale status
+      register: ts_status
+      failed_when: false
+      changed_when: false
+
+    - name: Display current status
+      debug:
+        msg: |
+          Current Tailscale status:
+          {{ ts_status.stdout }}
+
+    - name: Start Tailscale authentication (manual)
+      command: tailscale up --ssh
+      register: auth_output
+      async: 10
+      poll: 0
+      when: "'Logged out' in ts_status.stdout"
+
+    - name: Wait for auth URL to appear in logs
+      pause:
+        seconds: 2
+      when: "'Logged out' in ts_status.stdout"
+
+    - name: Get authentication URL from tailscaled logs
+      shell: journalctl -u tailscaled -n 100 --no-pager | grep -oP 'AuthURL is \K.*' | tail -1
+      register: auth_url
+      when: "'Logged out' in ts_status.stdout"
+
+    - name: Display authentication link
+      debug:
+        msg: |
+          ╔════════════════════════════════════════════════════════════════╗
+          ║  Tailscale Authentication Required                             ║
+          ╚════════════════════════════════════════════════════════════════╝
+
+          Host: {{ inventory_hostname }}
+
+          🔗 Authentication URL:
+          {{ auth_url.stdout }}
+
+          Open the link above in your browser to complete authentication.
+
+          After authentication, verify with:
+            ansible {{ inventory_hostname }} -a "sudo tailscale status"
+      when:
+        - "'Logged out' in ts_status.stdout"
+        - "auth_url.stdout | default('') | length > 0"
+
+    - name: Display already authenticated message
+      debug:
+        msg: |
+          ✓ Tailscale is already authenticated on {{ inventory_hostname }}
+
+          Status:
+          {{ ts_status.stdout }}
+      when: "'Logged out' not in ts_status.stdout"
+
+    - name: Wait for user to authenticate (pause)
+      pause:
+        prompt: |
+
+          Press ENTER after you've authenticated in the browser...
+      when: "'Logged out' in ts_status.stdout"
+
+    - name: Verify authentication
+      command: tailscale status
+      register: final_status
+      failed_when: false
+      changed_when: false
+
+    - name: Display final status
+      debug:
+        msg: |
+          Final Tailscale status:
+          {{ final_status.stdout }}
+
+          {% if 'Logged out' in final_status.stdout %}
+          ⚠️  Still logged out. Please check authentication.
+          {% else %}
+          ✓ Successfully authenticated!
+          {% endif %}

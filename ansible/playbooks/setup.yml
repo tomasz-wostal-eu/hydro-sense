@@ -1,0 +1,246 @@
+---
+- name: Setup Raspberry Pi for HydroSense
+  hosts: raspberry_pi
+  become: yes
+
+  tasks:
+    - name: Update and upgrade apt packages
+      apt:
+        update_cache: yes
+        upgrade: dist
+        cache_valid_time: 3600
+      tags: system
+
+    - name: Install system dependencies
+      apt:
+        name:
+          - python3
+          - python3-pip
+          - python3-venv
+          - git
+          - rsync
+          - build-essential
+          - python3-dev
+          - scons
+          - swig
+          - curl
+          - gpg
+        state: present
+      tags: dependencies
+
+    # Tailscale installation
+    - name: Check if Tailscale is installed
+      command: which tailscale
+      register: tailscale_check
+      failed_when: false
+      changed_when: false
+      when: tailscale_enabled | default(false)
+      tags: tailscale
+
+    - name: Download Tailscale GPG key
+      get_url:
+        url: https://pkgs.tailscale.com/stable/raspbian/bullseye.noarmor.gpg
+        dest: /usr/share/keyrings/tailscale-archive-keyring.gpg
+        mode: '0644'
+      when:
+        - tailscale_enabled | default(false)
+        - tailscale_check.rc != 0
+      tags: tailscale
+
+    - name: Add Tailscale repository
+      apt_repository:
+        repo: "deb [signed-by=/usr/share/keyrings/tailscale-archive-keyring.gpg] https://pkgs.tailscale.com/stable/raspbian bullseye main"
+        filename: tailscale
+        state: present
+      when:
+        - tailscale_enabled | default(false)
+        - tailscale_check.rc != 0
+      tags: tailscale
+
+    - name: Install Tailscale
+      apt:
+        name: tailscale
+        state: present
+        update_cache: yes
+      when:
+        - tailscale_enabled | default(false)
+        - tailscale_check.rc != 0
+      tags: tailscale
+
+    - name: Check Tailscale connection status
+      command: tailscale status
+      register: tailscale_status
+      failed_when: false
+      changed_when: false
+      when: tailscale_enabled | default(false)
+      tags: tailscale
+
+    - name: Start and authenticate Tailscale
+      command: "tailscale up --authkey={{ tailscale_auth_key }} --ssh"
+      when:
+        - tailscale_enabled | default(false)
+        - tailscale_auth_key is defined
+        - tailscale_auth_key | length > 0
+        - "'Logged out' in tailscale_status.stdout or tailscale_status.rc != 0"
+      tags: tailscale
+
+    - name: Enable Tailscale service
+      systemd:
+        name: tailscaled
+        enabled: yes
+        state: started
+      when: tailscale_enabled | default(false)
+      tags: tailscale
+
+    - name: Ensure SPI is enabled (for LED control)
+      lineinfile:
+        path: /boot/firmware/config.txt
+        regexp: '^#?dtparam=spi='
+        line: 'dtparam=spi=on'
+        create: no
+      notify: reboot required
+      tags: boot_config
+      ignore_errors: yes
+
+    - name: Fallback - Ensure SPI in /boot/config.txt (older Pi OS)
+      lineinfile:
+        path: /boot/config.txt
+        regexp: '^#?dtparam=spi='
+        line: 'dtparam=spi=on'
+        create: no
+      notify: reboot required
+      tags: boot_config
+      when: ansible_facts['distribution_major_version'] | int < 12
+      ignore_errors: yes
+
+    - name: Ensure 1-Wire is enabled (for DS18B20 temperature sensors)
+      lineinfile:
+        path: /boot/firmware/config.txt
+        regexp: '^#?dtoverlay=w1-gpio'
+        line: 'dtoverlay=w1-gpio'
+        create: no
+      notify: reboot required
+      tags: boot_config
+      ignore_errors: yes
+
+    - name: Fallback - Ensure 1-Wire in /boot/config.txt (older Pi OS)
+      lineinfile:
+        path: /boot/config.txt
+        regexp: '^#?dtoverlay=w1-gpio'
+        line: 'dtoverlay=w1-gpio'
+        create: no
+      notify: reboot required
+      tags: boot_config
+      when: ansible_facts['distribution_major_version'] | int < 12
+      ignore_errors: yes
+
+    - name: Load w1-gpio kernel module
+      community.general.modprobe:
+        name: w1-gpio
+        state: present
+      tags: boot_config
+
+    - name: Load w1-therm kernel module
+      community.general.modprobe:
+        name: w1-therm
+        state: present
+      tags: boot_config
+
+    - name: Create project directory
+      file:
+        path: "{{ project_path }}"
+        state: directory
+        owner: "{{ ansible_user }}"
+        group: "{{ ansible_user }}"
+        mode: '0755'
+      tags: setup
+
+    - name: Create data directory for gradient presets
+      file:
+        path: "{{ project_path }}/data"
+        state: directory
+        owner: "{{ ansible_user }}"
+        group: "{{ ansible_user }}"
+        mode: '0755'
+      tags: setup
+
+    - name: Create virtual environment
+      command: python3 -m venv {{ venv_path }}
+      args:
+        creates: "{{ venv_path }}/bin/activate"
+      become_user: "{{ ansible_user }}"
+      tags: setup
+
+    - name: Upgrade pip in virtual environment
+      pip:
+        name: pip
+        state: latest
+        virtualenv: "{{ venv_path }}"
+      become_user: "{{ ansible_user }}"
+      tags: setup
+
+    - name: Check if requirements.txt exists
+      stat:
+        path: "{{ project_path }}/requirements.txt"
+      register: requirements_file
+      tags: dependencies
+
+    - name: Install Python dependencies from requirements.txt
+      pip:
+        requirements: "{{ project_path }}/requirements.txt"
+        virtualenv: "{{ venv_path }}"
+      become_user: "{{ ansible_user }}"
+      when: requirements_file.stat.exists
+      tags: dependencies
+
+    - name: Install rpi-ws281x library
+      pip:
+        name: rpi-ws281x
+        version: "5.0.0"
+        virtualenv: "{{ venv_path }}"
+      become_user: "{{ ansible_user }}"
+      tags: dependencies
+
+    - name: Install astral library (astronomical calculations)
+      pip:
+        name: astral
+        version: "3.2"
+        virtualenv: "{{ venv_path }}"
+      become_user: "{{ ansible_user }}"
+      tags: dependencies
+
+    - name: Template .env file
+      template:
+        src: ../templates/env.j2
+        dest: "{{ project_path }}/.env"
+        owner: "{{ ansible_user }}"
+        group: "{{ ansible_user }}"
+        mode: '0600'
+      tags: config
+
+    - name: Copy systemd service file
+      template:
+        src: ../templates/hydrosense.service.j2
+        dest: /etc/systemd/system/hydrosense.service
+        owner: root
+        group: root
+        mode: '0644'
+      notify: reload systemd
+      tags: service
+
+    - name: Enable and start hydrosense service
+      systemd:
+        name: hydrosense
+        enabled: yes
+        state: started
+        daemon_reload: yes
+      tags: service
+
+  handlers:
+    - name: reload systemd
+      systemd:
+        daemon_reload: yes
+
+    - name: reboot required
+      debug:
+        msg: "Reboot required for boot config changes to take effect. Run 'ansible-playbook playbooks/reboot.yml' when ready."

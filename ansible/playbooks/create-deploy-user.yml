@@ -1,0 +1,93 @@
+---
+- name: Create deploy user with sudo access and SSH key authentication
+  hosts: raspberry_pi
+  become: yes
+  vars_prompt:
+    - name: ssh_public_key
+      prompt: "Enter SSH public key for deploy user (or press Enter to use ~/.ssh/personal.pub)"
+      private: no
+      default: ""
+
+  tasks:
+    - name: Read SSH public key from local file if not provided
+      set_fact:
+        deploy_ssh_key: "{{ ssh_public_key if ssh_public_key else lookup('file', lookup('env', 'HOME') + '/.ssh/personal.pub') }}"
+
+    - name: Create deploy user
+      user:
+        name: deploy
+        state: present
+        shell: /bin/bash
+        create_home: yes
+        groups: sudo,gpio,spi,i2c
+        append: yes
+      tags: user
+
+    - name: Set up SSH directory for deploy user
+      file:
+        path: /home/deploy/.ssh
+        state: directory
+        owner: deploy
+        group: deploy
+        mode: '0700'
+      tags: ssh
+
+    - name: Add SSH public key to authorized_keys
+      authorized_key:
+        user: deploy
+        key: "{{ deploy_ssh_key }}"
+        state: present
+        exclusive: no
+      tags: ssh
+
+    - name: Disable password authentication for deploy user
+      user:
+        name: deploy
+        password: '!'
+        update_password: always
+      tags: security
+
+    - name: Create sudoers file for deploy user (passwordless sudo)
+      copy:
+        content: |
+          # Allow deploy user full passwordless sudo
+          # (Safe because SSH key authentication only, no password login)
+          deploy ALL=(ALL) NOPASSWD: ALL
+        dest: /etc/sudoers.d/deploy
+        owner: root
+        group: root
+        mode: '0440'
+        validate: 'visudo -cf %s'
+      tags: sudo
+
+    - name: Ensure project directory is owned by deploy user
+      file:
+        path: "{{ project_path }}"
+        state: directory
+        owner: deploy
+        group: deploy
+        recurse: yes
+      tags: permissions
+
+    - name: Test sudo access for deploy user
+      command: sudo -l -U deploy
+      register: sudo_test
+      changed_when: false
+      tags: test
+
+    - name: Display sudo permissions
+      debug:
+        var: sudo_test.stdout_lines
+      tags: test
+
+    - name: Display SSH connection info
+      debug:
+        msg: |
+          Deploy user created successfully!
+
+          To connect:
+            ssh -i ~/.ssh/personal deploy@{{ ansible_host }}
+
+          To test sudo:
+            ssh -i ~/.ssh/personal deploy@{{ ansible_host }} 'sudo systemctl status hydrosense'
+      tags: test

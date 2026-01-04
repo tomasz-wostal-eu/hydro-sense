@@ -1,0 +1,126 @@
+---
+- name: Deploy HydroSense to Raspberry Pi
+  hosts: raspberry_pi
+  become: no
+  vars_files:
+    - ../group_vars/raspberry_pi/vault.yml
+
+  tasks:
+    - name: Ensure project directory exists
+      file:
+        path: "{{ project_path }}"
+        state: directory
+        owner: "{{ ansible_user }}"
+        group: "{{ ansible_user }}"
+        mode: '0755'
+      become: yes
+
+    - name: Sync application code (app directory)
+      synchronize:
+        src: ../../app/
+        dest: "{{ project_path }}/app/"
+        delete: yes
+        recursive: yes
+        rsync_opts:
+          - "--exclude=__pycache__/"
+          - "--exclude=*.pyc"
+          - "--exclude=*.pyo"
+      tags: sync
+
+    - name: Sync requirements.txt
+      synchronize:
+        src: ../../requirements.txt
+        dest: "{{ project_path }}/requirements.txt"
+      tags: sync
+
+    - name: Sync systemd service file to project
+      synchronize:
+        src: ../../hydrosense.service
+        dest: "{{ project_path }}/hydrosense.service"
+      tags: sync
+
+    - name: Create data directory
+      file:
+        path: "{{ project_path }}/data"
+        state: directory
+        owner: "{{ ansible_user }}"
+        group: "{{ ansible_user }}"
+        mode: '0755'
+      become: yes
+      tags: sync
+
+    - name: Debug MQTT variables
+      debug:
+        msg: |
+          mqtt_broker: {{ mqtt_broker | default('UNDEFINED') }}
+          mqtt_username: {{ mqtt_username | default('UNDEFINED') }}
+          mqtt_password: {{ mqtt_password | default('UNDEFINED') }}
+      tags: config
+
+    - name: Update .env file with current configuration
+      template:
+        src: "{{ playbook_dir }}/../templates/env.j2"
+        dest: "{{ project_path }}/.env"
+        owner: "{{ ansible_user }}"
+        group: "{{ ansible_user }}"
+        mode: '0600'
+      tags: config
+
+    - name: Install/update Python dependencies
+      pip:
+        requirements: "{{ project_path }}/requirements.txt"
+        virtualenv: "{{ venv_path }}"
+      become_user: "{{ ansible_user }}"
+      tags: dependencies
+
+    - name: Update systemd service file
+      template:
+        src: ../templates/hydrosense.service.j2
+        dest: /etc/systemd/system/hydrosense.service
+        owner: root
+        group: root
+        mode: '0644'
+      become: yes
+      notify: reload systemd
+      tags: service
+
+    - name: Reload systemd daemon
+      systemd:
+        daemon_reload: yes
+      become: yes
+      tags: service
+
+    - name: Restart hydrosense service
+      systemd:
+        name: hydrosense
+        state: restarted
+      become: yes
+      tags: service
+
+    - name: Wait for service to be active
+      systemd:
+        name: hydrosense
+      register: service_status
+      until: service_status.status.ActiveState == "active"
+      retries: 5
+      delay: 2
+      become: yes
+      tags: service
+
+    - name: Check service status
+      command: systemctl status hydrosense --no-pager -l
+      register: service_output
+      changed_when: false
+      become: yes
+      tags: service
+
+    - name: Display service status
+      debug:
+        var: service_output.stdout_lines
+      tags: service
+
+  handlers:
+    - name: reload systemd
+      systemd:
+        daemon_reload: yes
+      become: yes

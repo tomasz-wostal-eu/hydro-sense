@@ -1,0 +1,32 @@
+[Unit]
+Description=HydroSense - LED Control Service
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=root
+Group=video
+SupplementaryGroups=gpio video
+WorkingDirectory={{ project_path }}
+Environment="PATH={{ venv_path }}/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
+ExecStart={{ venv_path }}/bin/python -m uvicorn app.main:app --host 0.0.0.0 --port 8000 --workers 1
+
+# Allow access to hardware devices (required for GPIO/DMA and mailbox)
+PrivateDevices=no
+DeviceAllow=/dev/mem rw
+DeviceAllow=/dev/vcio rw
+DeviceAllow=/dev/gpiomem rw
+
+# Restart policy
+Restart=on-failure
+RestartSec=5s
+StartLimitInterval=0
+
+# Logging
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=hydrosense
+
+[Install]
+WantedBy=multi-user.target

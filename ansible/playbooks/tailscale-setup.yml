@@ -1,0 +1,111 @@
+---
+- name: Install and configure Tailscale on Raspberry Pi
+  hosts: raspberry_pi
+  become: yes
+
+  tasks:
+    - name: Check if Tailscale is already installed
+      command: which tailscale
+      register: tailscale_check
+      failed_when: false
+      changed_when: false
+      tags: check
+
+    - name: Display Tailscale installation status
+      debug:
+        msg: "Tailscale is {{ 'already installed' if tailscale_check.rc == 0 else 'not installed' }}"
+      tags: check
+
+    - name: Download Tailscale GPG key
+      get_url:
+        url: https://pkgs.tailscale.com/stable/raspbian/bullseye.noarmor.gpg
+        dest: /usr/share/keyrings/tailscale-archive-keyring.gpg
+        mode: '0644'
+      when: tailscale_check.rc != 0
+      tags: install
+
+    - name: Add Tailscale repository
+      apt_repository:
+        repo: "deb [signed-by=/usr/share/keyrings/tailscale-archive-keyring.gpg] https://pkgs.tailscale.com/stable/raspbian bullseye main"
+        filename: tailscale
+        state: present
+      when: tailscale_check.rc != 0
+      tags: install
+
+    - name: Update apt cache
+      apt:
+        update_cache: yes
+      when: tailscale_check.rc != 0
+      tags: install
+
+    - name: Install Tailscale
+      apt:
+        name: tailscale
+        state: present
+      when: tailscale_check.rc != 0
+      tags: install
+
+    - name: Check Tailscale status
+      command: tailscale status
+      register: tailscale_status
+      failed_when: false
+      changed_when: false
+      tags: status
+
+    - name: Display Tailscale status
+      debug:
+        var: tailscale_status.stdout_lines
+      tags: status
+
+    - name: Authenticate with Tailscale (if auth key provided)
+      command: "tailscale up --authkey={{ tailscale_auth_key }} --accept-routes --ssh"
+      when:
+        - tailscale_auth_key is defined
+        - tailscale_auth_key | length > 0
+        - "'Logged out' in tailscale_status.stdout or tailscale_status.rc != 0"
+      tags: auth
+
+    - name: Display Tailscale authentication note
+      debug:
+        msg: |
+          To authenticate Tailscale manually, run:
+            ssh {{ ansible_user }}@{{ ansible_host }} 'sudo tailscale up --accept-routes --ssh'
+
+          Or set tailscale_auth_key in vault.yml and re-run this playbook.
+          Get auth key from: https://login.tailscale.com/admin/settings/keys
+      when: tailscale_auth_key is not defined or tailscale_auth_key | length == 0
+      tags: auth
+
+    - name: Enable and start Tailscale service
+      systemd:
+        name: tailscaled
+        enabled: yes
+        state: started
+      tags: service
+
+    - name: Get final Tailscale status
+      command: tailscale status
+      register: final_status
+      failed_when: false
+      changed_when: false
+      tags: verify
+
+    - name: Display final status
+      debug:
+        msg: |
+          Tailscale Status:
+          {{ final_status.stdout }}
+
+          {% if 'Logged out' in final_status.stdout %}
+          ⚠️  Tailscale is NOT authenticated!
+
+          To authenticate:
+          1. Add auth key to vault: ansible-vault edit group_vars/raspberry_pi/vault.yml
+          2. Re-run: make tailscale HOST={{ inventory_hostname }}
+
+          Or authenticate manually:
+          ssh {{ ansible_user }}@{{ ansible_host }} 'sudo tailscale up --accept-routes --ssh'
+          {% else %}
+          ✓ Tailscale is authenticated and running!
+          {% endif %}
+      tags: verify

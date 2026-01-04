@@ -1,0 +1,40 @@
+[Unit]
+Description=HydroSense - LED Control with Home Assistant MQTT Integration
+After=network.target
+
+[Service]
+Type=simple
+# Run as root for GPIO/DMA access (rpi_ws281x requirement)
+User=root
+Group=root
+WorkingDirectory=/home/twostal/hydrosense
+EnvironmentFile=/home/twostal/hydrosense/.env
+ExecStart=/home/twostal/hydrosense/.venv/bin/python -m uvicorn app.main:app --host 0.0.0.0 --port 8000 --workers 1
+
+# Disable systemd sandboxing for hardware access
+NoNewPrivileges=false
+PrivateDevices=no
+ProtectHome=no
+ProtectSystem=no
+DevicePolicy=auto
+DeviceAllow=/dev/mem rw
+DeviceAllow=/dev/gpiomem rw
+DeviceAllow=/dev/vcio rw
+DeviceAllow=/dev/vchiq rw
+
+# Restart policy
+Restart=on-failure
+RestartSec=5s
+
+# Graceful shutdown
+TimeoutStopSec=10
+KillMode=mixed
+KillSignal=SIGTERM
+
+# Logging
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=hydrosense
+
+[Install]
+WantedBy=multi-user.target

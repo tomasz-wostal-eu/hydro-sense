@@ -1,0 +1,50 @@
+# Ansible Vault password file - CRITICAL: Never commit!
+.vault-pass
+vault-pass.txt
+*.vault-pass
+
+# Ansible retry files
+*.retry
+
+# Ansible facts cache
+/tmp/
+.ansible/
+ansible.log
+
+# Python cache
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+
+# Environment files with secrets
+.env
+*.env
+!.env.example
+
+# SSH keys
+*.pem
+*.key
+id_rsa*
+*.pub
+
+# Editor files
+*.swp
+*.swo
+*~
+.vscode/
+.idea/
+*.sublime-*
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Temporary test files
+test-*.yml
+temp-*.yml
+
+# Backup files
+*.bak
+*.backup
+*~

@@ -1,0 +1,33 @@
+---
+- name: Check HydroSense status on Raspberry Pi
+  hosts: raspberry_pi
+  become: yes
+  gather_facts: no
+
+  tasks:
+    - name: Check service status
+      systemd:
+        name: hydrosense
+      register: service_status
+
+    - name: Get detailed service status
+      command: systemctl status hydrosense --no-pager -l
+      register: service_output
+      changed_when: false
+      failed_when: false
+
+    - name: Display service status
+      debug:
+        msg: |
+          Host: {{ inventory_hostname }}
+          Status: {{ service_status.status.ActiveState }}
+          {{ service_output.stdout }}
+
+    - name: Get recent logs
+      command: journalctl -u hydrosense -n 20 --no-pager
+      register: logs
+      changed_when: false
+
+    - name: Display recent logs
+      debug:
+        var: logs.stdout_lines
