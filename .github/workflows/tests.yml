@@ -47,12 +47,6 @@ jobs:
         name: codecov-umbrella
         fail_ci_if_error: false
 
-    - name: Generate coverage badge
-      if: matrix.python-version == '3.11' && github.ref == 'refs/heads/main'
-      run: |
-        coverage-badge -o coverage.svg -f
-      continue-on-error: true
-
     - name: Test summary
       if: always()
       run: |
