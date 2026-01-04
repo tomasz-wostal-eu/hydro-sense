@@ -12,3 +12,6 @@ httpx==0.25.2
 
 # For mocking time-based operations
 freezegun==1.4.0
+
+# Coverage badge generation
+coverage-badge==1.1.0
