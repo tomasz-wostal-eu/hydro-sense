@@ -3,12 +3,13 @@
 import pytest
 import threading
 import time
-from unittest.mock import Mock, MagicMock
+from unittest.mock import Mock, MagicMock, patch
 from app.gradient import (
     ColorStop,
     GradientConfig,
     render_gradient,
-    validate_gradient_config
+    validate_gradient_config,
+    animate_gradient
 )
 
 
@@ -297,3 +298,260 @@ class TestValidateGradientConfig:
 
         # Should not raise exception
         validate_gradient_config(config)
+
+class TestAnimateGradient:
+    """Tests for gradient animation functions."""
+
+    def test_animate_gradient_shift(self):
+        """Should animate gradient with shift animation."""
+        # Create mock LED strip
+        mock_leds = Mock()
+        mock_leds.count = 10
+        mock_leds.anim_lock = threading.Lock()
+
+        config = GradientConfig(
+            stops=[
+                ColorStop(position=0.0, r=255, g=0, b=0),
+                ColorStop(position=1.0, r=0, g=0, b=255),
+            ],
+            brightness=1.0,
+            animation="shift",
+            speed=1.0,
+            direction="forward"
+        )
+
+        cancel_event = threading.Event()
+
+        # Run animation for short duration with faster frame timing (no delay)
+        with patch('app.gradient.time.sleep'):
+            thread = threading.Thread(
+                target=animate_gradient,
+                args=(mock_leds, config, 0.1, cancel_event)  # 100ms duration
+            )
+            thread.start()
+            thread.join(timeout=1.0)
+
+        # Verify LED methods were called
+        assert mock_leds.set_brightness.called
+        assert mock_leds.set_pixel_array.called
+
+    def test_animate_gradient_pulse(self):
+        """Should animate gradient with pulse animation."""
+        mock_leds = Mock()
+        mock_leds.count = 10
+        mock_leds.anim_lock = threading.Lock()
+
+        config = GradientConfig(
+            stops=[
+                ColorStop(position=0.0, r=255, g=128, b=0),
+                ColorStop(position=1.0, r=255, g=0, b=128),
+            ],
+            brightness=1.0,
+            animation="pulse",
+            speed=2.0
+        )
+
+        cancel_event = threading.Event()
+
+        with patch('app.gradient.time.sleep'):
+            thread = threading.Thread(
+                target=animate_gradient,
+                args=(mock_leds, config, 0.1, cancel_event)
+            )
+            thread.start()
+            thread.join(timeout=1.0)
+
+        assert mock_leds.set_brightness.called
+        assert mock_leds.set_pixel_array.called
+
+    def test_animate_gradient_rainbow(self):
+        """Should animate gradient with rainbow animation."""
+        mock_leds = Mock()
+        mock_leds.count = 10
+        mock_leds.anim_lock = threading.Lock()
+
+        config = GradientConfig(
+            stops=[
+                ColorStop(position=0.0, r=255, g=0, b=0),
+                ColorStop(position=1.0, r=255, g=0, b=255),
+            ],
+            brightness=0.8,
+            animation="rainbow",
+            speed=1.5
+        )
+
+        cancel_event = threading.Event()
+
+        with patch('app.gradient.time.sleep'):
+            thread = threading.Thread(
+                target=animate_gradient,
+                args=(mock_leds, config, 0.1, cancel_event)
+            )
+            thread.start()
+            thread.join(timeout=1.0)
+
+        assert mock_leds.set_brightness.called
+        assert mock_leds.set_pixel_array.called
+
+    def test_animate_gradient_cancellation(self):
+        """Should respect cancellation event."""
+        mock_leds = Mock()
+        mock_leds.count = 10
+        mock_leds.anim_lock = threading.Lock()
+
+        config = GradientConfig(
+            stops=[
+                ColorStop(position=0.0, r=255, g=0, b=0),
+                ColorStop(position=1.0, r=0, g=255, b=0),
+            ],
+            brightness=1.0,
+            animation="shift",
+            speed=1.0
+        )
+
+        cancel_event = threading.Event()
+        cancel_event.set()  # Pre-cancel
+
+        # Should exit immediately
+        animate_gradient(mock_leds, config, 10, cancel_event)
+
+        # Should not have done much work
+        assert mock_leds.set_brightness.call_count <= 1
+
+    def test_animate_gradient_duration(self):
+        """Should stop after specified duration."""
+        mock_leds = Mock()
+        mock_leds.count = 10
+        mock_leds.anim_lock = threading.Lock()
+
+        config = GradientConfig(
+            stops=[
+                ColorStop(position=0.0, r=255, g=0, b=0),
+                ColorStop(position=1.0, r=0, g=0, b=255),
+            ],
+            brightness=1.0,
+            animation="shift",
+            speed=1.0
+        )
+
+        cancel_event = threading.Event()
+
+        # Run with duration limit (no mocking, let it run with real timing)
+        start = time.time()
+        animate_gradient(mock_leds, config, 0.2, cancel_event)  # 200ms duration
+        elapsed = time.time() - start
+
+        # Should have stopped after duration (with some tolerance)
+        assert 0.1 < elapsed < 1.0  # Should run for ~200ms, not forever
+
+    def test_animate_gradient_backward_direction(self):
+        """Should animate gradient in backward direction."""
+        mock_leds = Mock()
+        mock_leds.count = 10
+        mock_leds.anim_lock = threading.Lock()
+
+        config = GradientConfig(
+            stops=[
+                ColorStop(position=0.0, r=255, g=0, b=0),
+                ColorStop(position=1.0, r=0, g=0, b=255),
+            ],
+            brightness=1.0,
+            animation="shift",
+            speed=1.0,
+            direction="backward"
+        )
+
+        cancel_event = threading.Event()
+
+        with patch('app.gradient.time.sleep'):
+            thread = threading.Thread(
+                target=animate_gradient,
+                args=(mock_leds, config, 0.1, cancel_event)
+            )
+            thread.start()
+            thread.join(timeout=1.0)
+
+        assert mock_leds.set_pixel_array.called
+
+    def test_animate_gradient_unknown_animation(self):
+        """Should reject unknown animation type at validation time."""
+        from pydantic import ValidationError
+
+        # Pydantic v2 validates animation type at model creation
+        with pytest.raises(ValidationError) as exc_info:
+            config = GradientConfig(
+                stops=[
+                    ColorStop(position=0.0, r=255, g=0, b=0),
+                    ColorStop(position=1.0, r=0, g=0, b=255),
+                ],
+                brightness=1.0,
+                animation="unknown_type",  # Invalid - should raise ValidationError
+                speed=1.0
+            )
+
+        # Verify the error is about the animation field
+        assert 'animation' in str(exc_info.value)
+
+    def test_animate_gradient_anim_lock(self):
+        """Should acquire animation lock."""
+        mock_leds = Mock()
+        mock_leds.count = 10
+        mock_leds.anim_lock = threading.Lock()
+
+        config = GradientConfig(
+            stops=[
+                ColorStop(position=0.0, r=255, g=0, b=0),
+                ColorStop(position=1.0, r=0, g=0, b=255),
+            ],
+            brightness=1.0,
+            animation="shift",
+            speed=1.0
+        )
+
+        cancel_event = threading.Event()
+
+        # Acquire lock in main thread
+        assert mock_leds.anim_lock.acquire(blocking=False)
+
+        # Try to start animation (should block or handle gracefully)
+        thread = threading.Thread(
+            target=animate_gradient,
+            args=(mock_leds, config, 0.1, cancel_event)
+        )
+        thread.start()
+
+        time.sleep(0.1)
+        mock_leds.anim_lock.release()
+        cancel_event.set()
+        thread.join(timeout=1.0)
+
+    def test_animate_gradient_different_speeds(self):
+        """Should respect different speed values."""
+        mock_leds = Mock()
+        mock_leds.count = 10
+        mock_leds.anim_lock = threading.Lock()
+
+        for speed in [0.5, 1.0, 2.0, 5.0]:
+            config = GradientConfig(
+                stops=[
+                    ColorStop(position=0.0, r=255, g=0, b=0),
+                    ColorStop(position=1.0, r=0, g=0, b=255),
+                ],
+                brightness=1.0,
+                animation="shift",
+                speed=speed
+            )
+
+            cancel_event = threading.Event()
+
+            with patch('app.gradient.time.sleep'):
+                thread = threading.Thread(
+                    target=animate_gradient,
+                    args=(mock_leds, config, 0.05, cancel_event)
+                )
+                thread.start()
+                thread.join(timeout=1.0)
+
+            # Should have animated
+            assert mock_leds.set_pixel_array.called
+            mock_leds.reset_mock()

@@ -265,7 +265,7 @@ jobs:
 
 Ensure you're running tests from the project root:
 ```bash
-cd /path/to/led-api
+cd /path/to/hydrosense
 pytest
 ```
 

@@ -16,11 +16,15 @@ import sys
 import asyncio
 from datetime import datetime
 
-from app.led import LedStrip
 from app.animations import cloudy_sunrise, cloudy_sunset
 from app.solar_time import get_sun_times
 from app.season_profiles import SEASONS
-from app.config import LED_COUNT, LED_PIN, LOG_LEVEL
+from app.config import (
+    LED_COUNT, LED_PIN, LOG_LEVEL, MOCK_MODE,
+    RELAY_ENABLED, parse_relay_config,
+    WATER_LEVEL_ENABLED, WATER_LEVEL_PIN, WATER_LEVEL_ACTIVE_HIGH, WATER_LEVEL_DEBOUNCE_TIME,
+    PUMP_AUTOMATION_ENABLED, PUMP_RELAY_ID, PUMP_ON_INTERVAL, PUMP_OFF_INTERVAL, PUMP_MAX_RUNTIME
+)
 from app.logger import logger
 from app.state import led_state
 from app.gradient import (
@@ -40,8 +44,24 @@ from app.gradient_presets import (
 )
 from app.mqtt_client import init_mqtt_service, publish_state_to_mqtt
 from app.config import MQTT_ENABLED, TEMP_ENABLED, TEMP_SENSOR_IDS, TEMP_UNIT, TEMP_UPDATE_INTERVAL
-from app.temperature import TemperatureSensorManager, TemperatureReading
 from typing import Optional
+
+# Conditional imports based on MOCK_MODE
+if MOCK_MODE:
+    logger.info("🎭 MOCK MODE ENABLED - Using simulated hardware")
+    from app.mock_hardware import MockLedStrip as LedStrip
+    from app.mock_hardware import MockTemperatureSensorManager as TemperatureSensorManager
+    from app.mock_hardware import MockTemperatureReading as TemperatureReading
+    from app.mock_hardware import MockRelayManager as RelayManager
+    from app.mock_hardware import MockWaterLevelSensor as WaterLevelSensor
+else:
+    from app.led import LedStrip
+    from app.temperature import TemperatureSensorManager, TemperatureReading
+    from app.relay import RelayManager
+    from app.water_level import WaterLevelSensor
+
+# Import pump automation (not hardware-dependent)
+from app.pump_automation import PumpAutomation, AutomationMode
 
 
 # ============================================================================
@@ -64,6 +84,100 @@ if TEMP_ENABLED:
     except Exception as e:
         logger.error(f"Failed to initialize temperature sensors: {e}", exc_info=True)
         temp_manager = None
+
+# Relay manager
+relay_manager: Optional[RelayManager] = None
+if RELAY_ENABLED:
+    try:
+        relay_configs = parse_relay_config()
+        if relay_configs:
+            relay_manager = RelayManager(relay_configs=relay_configs)
+            logger.info(f"Relay manager initialized with {len(relay_configs)} relays")
+        else:
+            logger.warning("RELAY_ENABLED=true but RELAY_CONFIG is empty")
+    except Exception as e:
+        logger.error(f"Failed to initialize relay manager: {e}", exc_info=True)
+        relay_manager = None
+
+# Water level sensor
+water_sensor: Optional[WaterLevelSensor] = None
+
+
+def water_level_changed_callback(new_level, water_info: dict):
+    """
+    Callback invoked when water level changes.
+
+    Publishes new state to MQTT if enabled.
+
+    Args:
+        new_level: New water level state
+        water_info: Sensor info dict with current_level, gpio_state, etc.
+
+    Note: This callback is called during WaterLevelSensor.__init__(),
+    when the global water_sensor is still None. We skip MQTT publish in that case
+    since the initial state will be published anyway during MQTT discovery.
+    """
+    logger.debug(f"water_level_changed_callback START: level={new_level}, MQTT_ENABLED={MQTT_ENABLED}")
+
+    if not MQTT_ENABLED:
+        logger.debug("Callback exit: MQTT not enabled")
+        return
+
+    # During __init__, water_sensor global is None - skip for now
+    # Initial state will be published during MQTT discovery
+    if water_sensor is None:
+        logger.debug(f"Water level callback during init (level={new_level}) - initial state will be published by MQTT discovery")
+        return
+
+    try:
+        logger.debug("Importing publish_water_level_to_mqtt...")
+        from app.mqtt_client import publish_water_level_to_mqtt
+
+        logger.info(f"Water level callback: publishing state {water_info['current_level']} to MQTT")
+
+        logger.debug(f"Scheduling async task with main_event_loop={main_event_loop}...")
+        schedule_async_task(publish_water_level_to_mqtt(water_info))
+
+        logger.debug("water_level_changed_callback COMPLETED")
+    except Exception as e:
+        logger.error(f"Error in water level callback: {e}", exc_info=True)
+
+
+if WATER_LEVEL_ENABLED:
+    try:
+        water_sensor = WaterLevelSensor(
+            gpio_pin=WATER_LEVEL_PIN,
+            active_high=WATER_LEVEL_ACTIVE_HIGH,
+            debounce_time=WATER_LEVEL_DEBOUNCE_TIME,
+            on_state_change=water_level_changed_callback
+        )
+        logger.info(f"Water level sensor initialized on GPIO {WATER_LEVEL_PIN}")
+    except Exception as e:
+        logger.error(f"Failed to initialize water level sensor: {e}", exc_info=True)
+        water_sensor = None
+
+# Pump automation
+pump_automation: Optional[PumpAutomation] = None
+if PUMP_AUTOMATION_ENABLED and relay_manager and water_sensor:
+    try:
+        pump_automation = PumpAutomation(
+            relay_manager=relay_manager,
+            water_sensor=water_sensor,
+            pump_relay_id=PUMP_RELAY_ID,
+            on_interval=PUMP_ON_INTERVAL,
+            off_interval=PUMP_OFF_INTERVAL,
+            max_runtime=PUMP_MAX_RUNTIME
+        )
+        pump_automation.start()
+        logger.info("Pump automation started")
+    except Exception as e:
+        logger.error(f"Failed to initialize pump automation: {e}", exc_info=True)
+        pump_automation = None
+elif PUMP_AUTOMATION_ENABLED:
+    if not relay_manager:
+        logger.warning("PUMP_AUTOMATION_ENABLED=true but relay manager not initialized")
+    if not water_sensor:
+        logger.warning("PUMP_AUTOMATION_ENABLED=true but water level sensor not initialized")
 
 
 # ============================================================================
@@ -339,6 +453,9 @@ async def lifespan(app: FastAPI):
     Starts MQTT service as background task on startup.
     Stops MQTT service on shutdown.
     """
+    global main_event_loop
+    main_event_loop = asyncio.get_running_loop()
+
     logger.info("HydroSense starting up")
     logger.info(f"Configuration: LED_COUNT={LED_COUNT}, LED_PIN={LED_PIN}, LOG_LEVEL={LOG_LEVEL}")
     logger.info(f"MQTT enabled: {MQTT_ENABLED}")
@@ -438,7 +555,9 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(
     title="HydroSense API",
-    lifespan=lifespan
+    lifespan=lifespan,
+    redoc_url=None,
+    docs_url="/docs"
 )
 
 # Backlight control router (all LED/gradient endpoints)
@@ -512,6 +631,25 @@ def run_async(name: str, fn, *args):
     thread.start()
 
 
+# Global event loop reference (set during lifespan startup)
+main_event_loop: Optional[asyncio.AbstractEventLoop] = None
+
+
+def schedule_async_task(coro):
+    """
+    Schedule an async coroutine from a synchronous context (e.g., thread callback).
+
+    Uses asyncio.run_coroutine_threadsafe() to schedule the coroutine in the main event loop.
+    """
+    if main_event_loop:
+        try:
+            asyncio.run_coroutine_threadsafe(coro, main_event_loop)
+        except Exception as e:
+            logger.error(f"Failed to schedule async task: {e}")
+    else:
+        logger.warning("Cannot schedule async task: main event loop not set")
+
+
 def shutdown_handler(signum, frame):
     """Handle SIGTERM/SIGINT for graceful shutdown."""
     logger.info(f"Received signal {signum}, initiating graceful shutdown")
@@ -534,6 +672,30 @@ def shutdown_handler(signum, frame):
         leds.off()
     except Exception as e:
         logger.error("Failed to turn off LEDs during shutdown", exc_info=True)
+
+    # Stop pump automation
+    if pump_automation:
+        try:
+            logger.info("Stopping pump automation")
+            pump_automation.stop()
+        except Exception as e:
+            logger.error("Failed to stop pump automation during shutdown", exc_info=True)
+
+    # Cleanup water level sensor
+    if water_sensor:
+        try:
+            logger.info("Cleaning up water level sensor")
+            water_sensor.cleanup()
+        except Exception as e:
+            logger.error("Failed to cleanup water sensor during shutdown", exc_info=True)
+
+    # Cleanup relays (turn off and release GPIO)
+    if relay_manager:
+        try:
+            logger.info("Cleaning up relays")
+            relay_manager.cleanup()
+        except Exception as e:
+            logger.error("Failed to cleanup relays during shutdown", exc_info=True)
 
     logger.info("Shutdown complete")
     # Note: Don't call sys.exit() here - let uvicorn handle shutdown gracefully
@@ -1202,6 +1364,385 @@ async def list_temperature_sensors():
 
     except Exception as e:
         logger.error("Failed to list sensors", exc_info=True)
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+# ------------------------------------------------------------------
+# Relay Control
+# ------------------------------------------------------------------
+
+
+class RelayStateRequest(BaseModel):
+    """Request to set relay state."""
+    state: Literal["ON", "OFF"]
+
+
+@app.get("/relay")
+async def get_all_relays():
+    """
+    Get information about all configured relays.
+
+    Returns:
+        {
+            "relays": {
+                "pump": {
+                    "id": "pump",
+                    "name": "Aquarium Pump",
+                    "gpio_pin": 17,
+                    "active_low": true,
+                    "state": "OFF",
+                    "default_state": "OFF"
+                }
+            },
+            "count": 1
+        }
+    """
+    if not relay_manager:
+        raise HTTPException(status_code=503, detail="Relay control not enabled")
+
+    try:
+        relay_info = relay_manager.get_all_info()
+        return {
+            "relays": relay_info,
+            "count": len(relay_info)
+        }
+    except Exception as e:
+        logger.error("Failed to get relay info", exc_info=True)
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/relay/{relay_id}")
+async def get_relay(relay_id: str):
+    """
+    Get information about specific relay.
+
+    Args:
+        relay_id: Relay identifier (e.g., "pump", "heater")
+
+    Returns:
+        {
+            "id": "pump",
+            "name": "Aquarium Pump",
+            "gpio_pin": 17,
+            "active_low": true,
+            "state": "OFF",
+            "default_state": "OFF"
+        }
+    """
+    if not relay_manager:
+        raise HTTPException(status_code=503, detail="Relay control not enabled")
+
+    try:
+        relay_info = relay_manager.get_relay_info(relay_id)
+        return relay_info
+    except KeyError:
+        raise HTTPException(status_code=404, detail=f"Relay '{relay_id}' not found")
+    except Exception as e:
+        logger.error(f"Failed to get relay info for '{relay_id}'", exc_info=True)
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/relay/{relay_id}/on")
+async def turn_relay_on(relay_id: str):
+    """
+    Turn relay ON.
+
+    Args:
+        relay_id: Relay identifier
+
+    Returns:
+        {
+            "relay_id": "pump",
+            "state": "ON",
+            "changed": true
+        }
+    """
+    if not relay_manager:
+        raise HTTPException(status_code=503, detail="Relay control not enabled")
+
+    try:
+        changed = await asyncio.to_thread(relay_manager.turn_on, relay_id)
+        new_state = relay_manager.get_state(relay_id)
+
+        # Publish state to MQTT if enabled
+        if MQTT_ENABLED and RELAY_ENABLED:
+            from app.relay import RelayState
+            await publish_relay_state_to_mqtt(relay_id, new_state)
+
+        return {
+            "relay_id": relay_id,
+            "state": new_state,
+            "changed": changed
+        }
+    except KeyError:
+        raise HTTPException(status_code=404, detail=f"Relay '{relay_id}' not found")
+    except Exception as e:
+        logger.error(f"Failed to turn on relay '{relay_id}'", exc_info=True)
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/relay/{relay_id}/off")
+async def turn_relay_off(relay_id: str):
+    """
+    Turn relay OFF.
+
+    Args:
+        relay_id: Relay identifier
+
+    Returns:
+        {
+            "relay_id": "pump",
+            "state": "OFF",
+            "changed": true
+        }
+    """
+    if not relay_manager:
+        raise HTTPException(status_code=503, detail="Relay control not enabled")
+
+    try:
+        changed = await asyncio.to_thread(relay_manager.turn_off, relay_id)
+        new_state = relay_manager.get_state(relay_id)
+
+        # Publish state to MQTT if enabled
+        if MQTT_ENABLED and RELAY_ENABLED:
+            from app.relay import RelayState
+            await publish_relay_state_to_mqtt(relay_id, new_state)
+
+        return {
+            "relay_id": relay_id,
+            "state": new_state,
+            "changed": changed
+        }
+    except KeyError:
+        raise HTTPException(status_code=404, detail=f"Relay '{relay_id}' not found")
+    except Exception as e:
+        logger.error(f"Failed to turn off relay '{relay_id}'", exc_info=True)
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/relay/{relay_id}/toggle")
+async def toggle_relay(relay_id: str):
+    """
+    Toggle relay state.
+
+    Args:
+        relay_id: Relay identifier
+
+    Returns:
+        {
+            "relay_id": "pump",
+            "state": "ON",
+            "previous_state": "OFF"
+        }
+    """
+    if not relay_manager:
+        raise HTTPException(status_code=503, detail="Relay control not enabled")
+
+    try:
+        previous_state = relay_manager.get_state(relay_id)
+        new_state = await asyncio.to_thread(relay_manager.toggle, relay_id)
+
+        # Publish state to MQTT if enabled
+        if MQTT_ENABLED and RELAY_ENABLED:
+            from app.relay import RelayState
+            await publish_relay_state_to_mqtt(relay_id, new_state)
+
+        return {
+            "relay_id": relay_id,
+            "state": new_state,
+            "previous_state": previous_state
+        }
+    except KeyError:
+        raise HTTPException(status_code=404, detail=f"Relay '{relay_id}' not found")
+    except Exception as e:
+        logger.error(f"Failed to toggle relay '{relay_id}'", exc_info=True)
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/relay/{relay_id}")
+async def set_relay_state(relay_id: str, request: RelayStateRequest):
+    """
+    Set relay to specific state.
+
+    Args:
+        relay_id: Relay identifier
+        request: {"state": "ON" or "OFF"}
+
+    Returns:
+        {
+            "relay_id": "pump",
+            "state": "ON",
+            "changed": true
+        }
+    """
+    if not relay_manager:
+        raise HTTPException(status_code=503, detail="Relay control not enabled")
+
+    try:
+        from app.relay import RelayState
+
+        target_state = RelayState.ON if request.state == "ON" else RelayState.OFF
+        changed = await asyncio.to_thread(relay_manager.set_state, relay_id, target_state)
+        new_state = relay_manager.get_state(relay_id)
+
+        # Publish state to MQTT if enabled
+        if MQTT_ENABLED and RELAY_ENABLED:
+            await publish_relay_state_to_mqtt(relay_id, new_state)
+
+        return {
+            "relay_id": relay_id,
+            "state": new_state,
+            "changed": changed
+        }
+    except KeyError:
+        raise HTTPException(status_code=404, detail=f"Relay '{relay_id}' not found")
+    except Exception as e:
+        logger.error(f"Failed to set relay state for '{relay_id}'", exc_info=True)
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+async def publish_relay_state_to_mqtt(relay_id: str, state):
+    """
+    Publish relay state to MQTT (Home Assistant).
+
+    Args:
+        relay_id: Relay identifier
+        state: Relay state (RelayState.ON or RelayState.OFF)
+    """
+    try:
+        from app.mqtt_client import mqtt_service
+        if mqtt_service and mqtt_service.client:
+            from app.relay import RelayState
+            topic = f"homeassistant/switch/{relay_id}/state"
+            payload = "ON" if state == RelayState.ON else "OFF"
+            await mqtt_service.client.publish(topic, payload, retain=True)
+            logger.debug(f"Published relay state to MQTT: {topic} = {payload}")
+    except Exception as e:
+        logger.error(f"Failed to publish relay state to MQTT: {e}")
+
+
+# ------------------------------------------------------------------
+# Water Level & Pump Automation
+# ------------------------------------------------------------------
+
+@app.get("/water-level")
+async def get_water_level():
+    """
+    Get current water level sensor status.
+
+    Returns:
+        {
+            "gpio_pin": 23,
+            "active_high": true,
+            "current_level": "OK" or "LOW",
+            "last_change": "2026-01-05T15:30:00.000Z",
+            "gpio_state": true/false/null
+        }
+    """
+    if not water_sensor:
+        raise HTTPException(status_code=503, detail="Water level sensor not enabled")
+
+    try:
+        return water_sensor.get_info()
+    except Exception as e:
+        logger.error("Failed to get water level", exc_info=True)
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/pump-automation")
+async def get_pump_automation_status():
+    """
+    Get pump automation status.
+
+    Returns:
+        {
+            "mode": "AUTO" / "MANUAL" / "DISABLED",
+            "water_level": "OK" / "LOW",
+            "pump_state": "ON" / "OFF",
+            "pump_relay_id": "pump",
+            "on_interval": 30,
+            "off_interval": 30,
+            "max_runtime": 300,
+            "cycle_count": 5,
+            "total_runtime": 150.5,
+            "automation_active": true,
+            "next_action": "turn_on" / "turn_off",
+            "next_action_in": 12.3
+        }
+    """
+    if not pump_automation:
+        raise HTTPException(status_code=503, detail="Pump automation not enabled")
+
+    try:
+        return pump_automation.get_status()
+    except Exception as e:
+        logger.error("Failed to get pump automation status", exc_info=True)
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+class AutomationModeRequest(BaseModel):
+    mode: Literal["AUTO", "MANUAL", "DISABLED"] = Field(..., description="Automation mode")
+
+
+@app.post("/pump-automation/mode")
+async def set_pump_automation_mode(request: AutomationModeRequest):
+    """
+    Set pump automation mode.
+
+    Args:
+        request: {"mode": "AUTO" / "MANUAL" / "DISABLED"}
+
+    Returns:
+        {
+            "mode": "AUTO",
+            "message": "Pump automation mode set to AUTO"
+        }
+    """
+    if not pump_automation:
+        raise HTTPException(status_code=503, detail="Pump automation not enabled")
+
+    try:
+        mode = AutomationMode(request.mode)
+        await asyncio.to_thread(pump_automation.set_mode, mode)
+
+        # Publish updated state to MQTT
+        if MQTT_ENABLED and PUMP_AUTOMATION_ENABLED:
+            from app.mqtt_client import publish_pump_automation_to_mqtt
+            pump_status = pump_automation.get_status()
+            await publish_pump_automation_to_mqtt(pump_status)
+
+        return {
+            "mode": request.mode,
+            "message": f"Pump automation mode set to {request.mode}"
+        }
+    except Exception as e:
+        logger.error(f"Failed to set pump automation mode to {request.mode}", exc_info=True)
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/pump-automation/reset-stats")
+async def reset_pump_automation_stats():
+    """
+    Reset pump automation statistics (cycle count, total runtime).
+
+    Returns:
+        {"message": "Pump automation statistics reset"}
+    """
+    if not pump_automation:
+        raise HTTPException(status_code=503, detail="Pump automation not enabled")
+
+    try:
+        await asyncio.to_thread(pump_automation.reset_statistics)
+
+        # Publish updated state to MQTT
+        if MQTT_ENABLED and PUMP_AUTOMATION_ENABLED:
+            from app.mqtt_client import publish_pump_automation_to_mqtt
+            pump_status = pump_automation.get_status()
+            await publish_pump_automation_to_mqtt(pump_status)
+
+        return {"message": "Pump automation statistics reset"}
+    except Exception as e:
+        logger.error("Failed to reset pump automation statistics", exc_info=True)
         raise HTTPException(status_code=500, detail=str(e))
 
 

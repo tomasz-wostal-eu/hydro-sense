@@ -39,10 +39,6 @@ sys.modules['RPi'] = MagicMock()
 sys.modules['RPi.GPIO'] = MagicMock()
 
 # Now we can import app modules safely
-# Mock TemperatureSensorManager to avoid file system access
-import app.temperature
-mock_temp_manager = MagicMock()
-app.temperature.TemperatureSensorManager = MagicMock(return_value=mock_temp_manager)
 
 
 @pytest.fixture

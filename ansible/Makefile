@@ -60,23 +60,23 @@ endif
 
 setup:
 ifdef HOST
-	ansible-playbook playbooks/setup.yml --limit $(HOST)
+	ansible-playbook playbooks/setup.yml --limit $(HOST) -vv
 else
-	ansible-playbook playbooks/setup.yml
+	ansible-playbook playbooks/setup.yml -vv
 endif
 
 deploy:
 ifdef HOST
-	ansible-playbook playbooks/deploy.yml --limit $(HOST)
+	ansible-playbook playbooks/deploy.yml --limit $(HOST) -vv
 else
-	ansible-playbook playbooks/deploy.yml
+	ansible-playbook playbooks/deploy.yml -vv
 endif
 
 status:
 ifdef HOST
-	ansible-playbook playbooks/status.yml --limit $(HOST)
+	ansible-playbook playbooks/status.yml --limit $(HOST) -vv
 else
-	ansible-playbook playbooks/status.yml
+	ansible-playbook playbooks/status.yml -vv
 endif
 
 reboot:

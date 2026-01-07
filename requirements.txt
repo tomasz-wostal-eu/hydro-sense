@@ -1,9 +1,10 @@
+# Core dependencies - Restored to working versions (pydantic v1)
 anyio==4.12.0
 click==8.3.1
 fastapi==0.99.1
 h11==0.16.0
 idna==3.11
-pydantic==1.10.26
+pydantic==1.10.26  # Pydantic v1 - has wheels, no compilation needed
 starlette==0.27.0
 typing_extensions==4.15.0
 uvicorn==0.40.0
@@ -13,6 +14,9 @@ python-dotenv==1.0.1
 
 # MQTT client for Home Assistant integration
 aiomqtt==2.0.1
+
+# GPIO control for relays and sensors
+RPi.GPIO==0.7.1
 
 # LED hardware control (already installed, listed for completeness)
 # rpi-ws281x==5.0.0

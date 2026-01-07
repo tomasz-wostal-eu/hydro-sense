@@ -75,6 +75,12 @@ def get_ha_discovery_config() -> dict:
         "optimistic": False,
         "qos": 1,
         "retain": True,
+        "device": {
+            "identifiers": [f"hydrosense_{MQTT_CLIENT_ID}"],
+            "name": f"HydroSense {MQTT_CLIENT_ID}",
+            "model": "Raspberry Pi LED Controller",
+            "manufacturer": "HydroSense"
+        }
     }
 
 
@@ -105,6 +111,170 @@ def get_temp_sensor_discovery_config(sensor_id: str) -> dict:
         "json_attributes_topic": f"hydrosense/{MQTT_CLIENT_ID}/temperature/{sensor_id}/state",
         "qos": 1,
         "retain": True,
+        "device": {
+            "identifiers": [f"hydrosense_{MQTT_CLIENT_ID}"],
+            "name": f"HydroSense {MQTT_CLIENT_ID}",
+            "model": "Raspberry Pi LED Controller",
+            "manufacturer": "HydroSense"
+        }
+    }
+
+
+def get_relay_discovery_config(relay_id: str, relay_name: str) -> dict:
+    """
+    Generate Home Assistant MQTT Discovery config for relay switch.
+
+    Args:
+        relay_id: Relay identifier (e.g., 'pump', 'heater')
+        relay_name: Human-readable relay name (e.g., 'Aquarium Pump')
+
+    Returns:
+        dict: HA discovery message payload for switch
+
+    Docs: https://www.home-assistant.io/integrations/switch.mqtt/
+    """
+    return {
+        "name": relay_name,
+        "unique_id": f"relay_{MQTT_CLIENT_ID}_{relay_id}",
+        "state_topic": f"homeassistant/switch/{relay_id}/state",
+        "command_topic": f"homeassistant/switch/{relay_id}/set",
+        "availability_topic": TOPIC_AVAILABILITY,
+        "payload_on": "ON",
+        "payload_off": "OFF",
+        "state_on": "ON",
+        "state_off": "OFF",
+        "optimistic": False,
+        "qos": 1,
+        "retain": True,
+        "device": {
+            "identifiers": [f"hydrosense_{MQTT_CLIENT_ID}"],
+            "name": f"HydroSense {MQTT_CLIENT_ID}",
+            "model": "Raspberry Pi LED Controller",
+            "manufacturer": "HydroSense"
+        }
+    }
+
+
+def get_water_level_discovery_config() -> dict:
+    """
+    Generate Home Assistant MQTT Discovery config for water level sensor.
+
+    Returns:
+        dict: HA discovery message payload for binary_sensor
+
+    Docs: https://www.home-assistant.io/integrations/binary_sensor.mqtt/
+    """
+    return {
+        "name": f"Water Level",
+        "unique_id": f"water_level_{MQTT_CLIENT_ID}",
+        "state_topic": f"hydrosense/{MQTT_CLIENT_ID}/water_level/state",
+        "availability_topic": TOPIC_AVAILABILITY,
+        "payload_on": "OK",
+        "payload_off": "LOW",
+        "device_class": "moisture",
+        "qos": 1,
+        "retain": True,
+        "json_attributes_topic": f"hydrosense/{MQTT_CLIENT_ID}/water_level/state",
+        "value_template": "{{ value_json.current_level }}",
+        "device": {
+            "identifiers": [f"hydrosense_{MQTT_CLIENT_ID}"],
+            "name": f"HydroSense {MQTT_CLIENT_ID}",
+            "model": "Raspberry Pi LED Controller",
+            "manufacturer": "HydroSense"
+        }
+    }
+
+
+def get_pump_mode_sensor_discovery_config() -> dict:
+    """
+    Generate Home Assistant MQTT Discovery config for pump mode sensor.
+
+    Returns:
+        dict: HA discovery message payload for sensor
+
+    Docs: https://www.home-assistant.io/integrations/sensor.mqtt/
+    """
+    return {
+        "name": f"Pump Mode",
+        "unique_id": f"pump_mode_{MQTT_CLIENT_ID}",
+        "state_topic": f"hydrosense/{MQTT_CLIENT_ID}/pump_automation/state",
+        "availability_topic": TOPIC_AVAILABILITY,
+        "value_template": "{{ value_json.mode }}",
+        "icon": "mdi:cog",
+        "qos": 1,
+        "retain": True,
+        "json_attributes_topic": f"hydrosense/{MQTT_CLIENT_ID}/pump_automation/state",
+        "device": {
+            "identifiers": [f"hydrosense_{MQTT_CLIENT_ID}"],
+            "name": f"HydroSense {MQTT_CLIENT_ID}",
+            "model": "Raspberry Pi LED Controller",
+            "manufacturer": "HydroSense"
+        }
+    }
+
+
+def get_pump_runtime_sensor_discovery_config() -> dict:
+    """
+    Generate Home Assistant MQTT Discovery config for pump runtime sensor.
+
+    Returns:
+        dict: HA discovery message payload for sensor
+
+    Docs: https://www.home-assistant.io/integrations/sensor.mqtt/
+    """
+    return {
+        "name": f"Pump Runtime",
+        "unique_id": f"pump_runtime_{MQTT_CLIENT_ID}",
+        "state_topic": f"hydrosense/{MQTT_CLIENT_ID}/pump_automation/state",
+        "availability_topic": TOPIC_AVAILABILITY,
+        "value_template": "{{ value_json.total_runtime | round(1) }}",
+        "unit_of_measurement": "s",
+        "icon": "mdi:timer",
+        "state_class": "total_increasing",
+        "qos": 1,
+        "retain": True,
+        "json_attributes_topic": f"hydrosense/{MQTT_CLIENT_ID}/pump_automation/state",
+        "device": {
+            "identifiers": [f"hydrosense_{MQTT_CLIENT_ID}"],
+            "name": f"HydroSense {MQTT_CLIENT_ID}",
+            "model": "Raspberry Pi LED Controller",
+            "manufacturer": "HydroSense"
+        }
+    }
+
+
+def get_pump_mode_button_discovery_config(mode: str) -> dict:
+    """
+    Generate Home Assistant MQTT Discovery config for pump mode button.
+
+    Args:
+        mode: Automation mode (AUTO, MANUAL, DISABLED)
+
+    Returns:
+        dict: HA discovery message payload for button
+
+    Docs: https://www.home-assistant.io/integrations/button.mqtt/
+    """
+    mode_icons = {
+        "AUTO": "mdi:auto-fix",
+        "MANUAL": "mdi:hand-back-right",
+        "DISABLED": "mdi:stop-circle"
+    }
+
+    return {
+        "name": f"Pump Mode {mode.title()}",
+        "unique_id": f"pump_mode_{mode.lower()}_{MQTT_CLIENT_ID}",
+        "command_topic": f"hydrosense/{MQTT_CLIENT_ID}/pump_automation/mode/set",
+        "availability_topic": TOPIC_AVAILABILITY,
+        "payload_press": mode,
+        "icon": mode_icons.get(mode, "mdi:button-pointer"),
+        "qos": 1,
+        "device": {
+            "identifiers": [f"hydrosense_{MQTT_CLIENT_ID}"],
+            "name": f"HydroSense {MQTT_CLIENT_ID}",
+            "model": "Raspberry Pi LED Controller",
+            "manufacturer": "HydroSense"
+        }
     }
 
 
@@ -184,7 +354,28 @@ class MQTTService:
                     # Subscribe to command topics
                     await self.client.subscribe(TOPIC_HA_COMMAND, qos=1)
                     await self.client.subscribe(TOPIC_GRADIENT_COMMAND, qos=1)
-                    logger.info("Subscribed to command topics")
+
+                    # Subscribe to relay command topics
+                    from app.config import RELAY_ENABLED
+                    if RELAY_ENABLED:
+                        from app.main import relay_manager
+                        if relay_manager:
+                            relay_ids = relay_manager.get_relay_ids()
+                            for relay_id in relay_ids:
+                                relay_command_topic = f"homeassistant/switch/{relay_id}/set"
+                                await self.client.subscribe(relay_command_topic, qos=1)
+                                logger.info(f"Subscribed to relay command topic: {relay_command_topic}")
+
+                    # Subscribe to pump automation command topics
+                    from app.config import PUMP_AUTOMATION_ENABLED
+                    if PUMP_AUTOMATION_ENABLED:
+                        from app.main import pump_automation
+                        if pump_automation:
+                            pump_mode_command_topic = f"hydrosense/{MQTT_CLIENT_ID}/pump_automation/mode/set"
+                            await self.client.subscribe(pump_mode_command_topic, qos=1)
+                            logger.info(f"Subscribed to pump automation mode command topic: {pump_mode_command_topic}")
+
+                    logger.info("Subscribed to all command topics")
 
                     # Publish initial state
                     await self.publish_state()
@@ -267,6 +458,102 @@ class MQTTService:
                         )
                         logger.info(f"Published HA discovery config for temperature sensor {sensor_id}")
 
+            # Publish relay switch discovery
+            from app.config import RELAY_ENABLED
+            if RELAY_ENABLED:
+                # Import here to avoid circular dependency
+                from app.main import relay_manager
+                if relay_manager:
+                    relay_ids = relay_manager.get_relay_ids()
+                    for relay_id in relay_ids:
+                        relay_info = relay_manager.get_relay_info(relay_id)
+                        topic = f"homeassistant/switch/{relay_id}/config"
+                        relay_config = get_relay_discovery_config(relay_id, relay_info['name'])
+
+                        await self.client.publish(
+                            topic,
+                            payload=json.dumps(relay_config),
+                            qos=1,
+                            retain=True,
+                        )
+                        logger.info(f"Published HA discovery config for relay switch {relay_id}")
+
+                        # Publish initial state
+                        state_topic = f"homeassistant/switch/{relay_id}/state"
+                        from app.relay import RelayState
+                        state_payload = "ON" if relay_info['state'] == RelayState.ON else "OFF"
+                        await self.client.publish(
+                            state_topic,
+                            payload=state_payload,
+                            qos=1,
+                            retain=True,
+                        )
+
+            # Publish water level sensor discovery
+            from app.config import WATER_LEVEL_ENABLED
+            if WATER_LEVEL_ENABLED:
+                # Import here to avoid circular dependency
+                from app.main import water_sensor
+                if water_sensor:
+                    topic = f"homeassistant/binary_sensor/water_level_{MQTT_CLIENT_ID}/config"
+                    water_config = get_water_level_discovery_config()
+
+                    await self.client.publish(
+                        topic,
+                        payload=json.dumps(water_config),
+                        qos=1,
+                        retain=True,
+                    )
+                    logger.info(f"Published HA discovery config for water level sensor")
+
+                    # Publish initial state
+                    water_info = water_sensor.get_info()
+                    await self.publish_water_level_state(water_info)
+
+            # Publish pump automation discovery
+            from app.config import PUMP_AUTOMATION_ENABLED
+            if PUMP_AUTOMATION_ENABLED:
+                # Import here to avoid circular dependency
+                from app.main import pump_automation
+                if pump_automation:
+                    # Publish pump mode sensor
+                    mode_topic = f"homeassistant/sensor/pump_mode_{MQTT_CLIENT_ID}/config"
+                    mode_config = get_pump_mode_sensor_discovery_config()
+                    await self.client.publish(
+                        mode_topic,
+                        payload=json.dumps(mode_config),
+                        qos=1,
+                        retain=True,
+                    )
+                    logger.info(f"Published HA discovery config for pump mode sensor")
+
+                    # Publish pump runtime sensor
+                    runtime_topic = f"homeassistant/sensor/pump_runtime_{MQTT_CLIENT_ID}/config"
+                    runtime_config = get_pump_runtime_sensor_discovery_config()
+                    await self.client.publish(
+                        runtime_topic,
+                        payload=json.dumps(runtime_config),
+                        qos=1,
+                        retain=True,
+                    )
+                    logger.info(f"Published HA discovery config for pump runtime sensor")
+
+                    # Publish pump mode buttons (AUTO, MANUAL, DISABLED)
+                    for mode in ["AUTO", "MANUAL", "DISABLED"]:
+                        button_topic = f"homeassistant/button/pump_mode_{mode.lower()}_{MQTT_CLIENT_ID}/config"
+                        button_config = get_pump_mode_button_discovery_config(mode)
+                        await self.client.publish(
+                            button_topic,
+                            payload=json.dumps(button_config),
+                            qos=1,
+                            retain=True,
+                        )
+                        logger.info(f"Published HA discovery config for pump mode button: {mode}")
+
+                    # Publish initial state
+                    pump_status = pump_automation.get_status()
+                    await self.publish_pump_automation_state(pump_status)
+
         except Exception as e:
             logger.error(f"Failed to publish HA discovery config: {e}", exc_info=True)
 
@@ -291,6 +578,12 @@ class MQTTService:
                 await self._handle_ha_command(payload)
             elif topic == TOPIC_GRADIENT_COMMAND:
                 await self._handle_gradient_command(payload)
+            elif topic.startswith("homeassistant/switch/") and topic.endswith("/set"):
+                # Extract relay_id from topic: homeassistant/switch/{relay_id}/set
+                relay_id = topic.split("/")[2]
+                await self._handle_relay_command(relay_id, payload)
+            elif topic == f"hydrosense/{MQTT_CLIENT_ID}/pump_automation/mode/set":
+                await self._handle_pump_mode_command(payload)
             else:
                 logger.warning(f"Unknown MQTT topic: {topic}")
 
@@ -355,6 +648,100 @@ class MQTTService:
             logger.error(f"Invalid JSON in gradient command: {e}")
         except Exception as e:
             logger.error(f"Error executing gradient command: {e}", exc_info=True)
+
+    async def _handle_relay_command(self, relay_id: str, payload: str):
+        """
+        Handle relay switch command from Home Assistant.
+
+        Payload format: "ON" or "OFF"
+
+        Args:
+            relay_id: Relay identifier
+            payload: Command string ("ON" or "OFF")
+        """
+        try:
+            logger.info(f"Relay command received for '{relay_id}': {payload}")
+
+            from app.config import RELAY_ENABLED
+            if not RELAY_ENABLED:
+                logger.warning("Relay command received but RELAY_ENABLED=false")
+                return
+
+            from app.main import relay_manager
+            if not relay_manager:
+                logger.warning("Relay command received but relay_manager not initialized")
+                return
+
+            from app.relay import RelayState
+            import asyncio
+
+            # Execute relay command
+            if payload == "ON":
+                await asyncio.to_thread(relay_manager.turn_on, relay_id)
+            elif payload == "OFF":
+                await asyncio.to_thread(relay_manager.turn_off, relay_id)
+            else:
+                logger.warning(f"Unknown relay command: {payload}")
+                return
+
+            # Publish updated state back to MQTT
+            new_state = relay_manager.get_state(relay_id)
+            state_topic = f"homeassistant/switch/{relay_id}/state"
+            state_payload = "ON" if new_state == RelayState.ON else "OFF"
+
+            await self.client.publish(
+                state_topic,
+                payload=state_payload,
+                qos=1,
+                retain=True,
+            )
+            logger.info(f"Published relay state for '{relay_id}': {state_payload}")
+
+        except KeyError:
+            logger.error(f"Relay '{relay_id}' not found")
+        except Exception as e:
+            logger.error(f"Error executing relay command for '{relay_id}': {e}", exc_info=True)
+
+    async def _handle_pump_mode_command(self, payload: str):
+        """
+        Handle pump automation mode change command from Home Assistant.
+
+        Payload format: "AUTO" or "MANUAL" or "DISABLED"
+
+        Args:
+            payload: Command string (mode name)
+        """
+        try:
+            logger.info(f"Pump mode command received: {payload}")
+
+            from app.config import PUMP_AUTOMATION_ENABLED
+            if not PUMP_AUTOMATION_ENABLED:
+                logger.warning("Pump mode command received but PUMP_AUTOMATION_ENABLED=false")
+                return
+
+            from app.main import pump_automation
+            if not pump_automation:
+                logger.warning("Pump mode command received but pump_automation not initialized")
+                return
+
+            from app.pump_automation import AutomationMode
+            import asyncio
+
+            # Validate and execute mode change
+            try:
+                mode = AutomationMode(payload)
+                await asyncio.to_thread(pump_automation.set_mode, mode)
+                logger.info(f"Pump automation mode set to: {mode}")
+
+                # Publish updated state back to MQTT
+                pump_status = pump_automation.get_status()
+                await self.publish_pump_automation_state(pump_status)
+
+            except ValueError:
+                logger.error(f"Invalid pump mode: {payload}. Valid modes: AUTO, MANUAL, DISABLED")
+
+        except Exception as e:
+            logger.error(f"Error executing pump mode command: {e}", exc_info=True)
 
     # ------------------------------------------------------------------------
     # State Publishing
@@ -450,6 +837,88 @@ class MQTTService:
         except Exception as e:
             logger.error(f"Failed to publish temperature for {sensor_id}: {e}", exc_info=True)
 
+    async def publish_water_level_state(self, water_level_info: dict):
+        """
+        Publish water level sensor state to MQTT.
+
+        Args:
+            water_level_info: Water level sensor info dict from get_info()
+        """
+        if not self.client:
+            return
+
+        try:
+            topic = f"hydrosense/{MQTT_CLIENT_ID}/water_level/state"
+
+            # Format payload for HA
+            payload = {
+                "current_level": water_level_info["current_level"],
+                "gpio_pin": water_level_info["gpio_pin"],
+                "gpio_state": water_level_info["gpio_state"],
+                "last_change": water_level_info["last_change"],
+                "active_high": water_level_info["active_high"]
+            }
+
+            await self.client.publish(
+                topic,
+                payload=json.dumps(payload),
+                qos=1,
+                retain=True,
+            )
+
+            logger.debug(f"Published water level state: {water_level_info['current_level']}")
+
+        except Exception as e:
+            logger.error(f"Failed to publish water level state: {e}", exc_info=True)
+
+    async def publish_pump_automation_state(self, pump_status: dict):
+        """
+        Publish pump automation state to MQTT.
+
+        Args:
+            pump_status: Pump automation status dict from get_status()
+        """
+        if not self.client:
+            return
+
+        try:
+            topic = f"hydrosense/{MQTT_CLIENT_ID}/pump_automation/state"
+
+            # Format payload for HA (convert enum to string)
+            from app.relay import RelayState
+            payload = {
+                "mode": pump_status["mode"],
+                "water_level": pump_status["water_level"],
+                "pump_state": pump_status["pump_state"].value if isinstance(pump_status["pump_state"], RelayState) else pump_status["pump_state"],
+                "pump_relay_id": pump_status["pump_relay_id"],
+                "on_interval": pump_status["on_interval"],
+                "off_interval": pump_status["off_interval"],
+                "max_runtime": pump_status["max_runtime"],
+                "cycle_count": pump_status["cycle_count"],
+                "total_runtime": pump_status["total_runtime"],
+                "automation_active": pump_status["automation_active"],
+                "next_action": pump_status.get("next_action"),
+                "next_action_in": pump_status.get("next_action_in")
+            }
+
+            # Add optional fields if present
+            if "running_since" in pump_status:
+                payload["running_since"] = pump_status["running_since"]
+                payload["current_runtime"] = pump_status["current_runtime"]
+                payload["runtime_remaining"] = pump_status["runtime_remaining"]
+
+            await self.client.publish(
+                topic,
+                payload=json.dumps(payload),
+                qos=1,
+                retain=True,
+            )
+
+            logger.debug(f"Published pump automation state: mode={pump_status['mode']}, pump={payload['pump_state']}")
+
+        except Exception as e:
+            logger.error(f"Failed to publish pump automation state: {e}", exc_info=True)
+
 
 # ============================================================================
 # Global Instance (initialized in main.py)
@@ -482,3 +951,25 @@ async def publish_state_to_mqtt(force: bool = False):
     """
     if mqtt_service:
         await mqtt_service.publish_state(force=force)
+
+
+async def publish_water_level_to_mqtt(water_level_info: dict):
+    """
+    Publish water level sensor state to MQTT (convenience function).
+
+    Args:
+        water_level_info: Water level sensor info dict from get_info()
+    """
+    if mqtt_service:
+        await mqtt_service.publish_water_level_state(water_level_info)
+
+
+async def publish_pump_automation_to_mqtt(pump_status: dict):
+    """
+    Publish pump automation state to MQTT (convenience function).
+
+    Args:
+        pump_status: Pump automation status dict from get_status()
+    """
+    if mqtt_service:
+        await mqtt_service.publish_pump_automation_state(pump_status)
