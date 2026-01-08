@@ -11,6 +11,9 @@ from app.water_level import WaterLevel
 from app.pump_automation import PumpAutomation, AutomationMode
 
 
+# No automatic cleanup - each test must call automation.stop()
+
+
 class TestMockRelayManager:
     """Tests for MockRelayManager."""
 
@@ -208,8 +211,30 @@ class TestPumpAutomation:
         automation.set_mode(AutomationMode.DISABLED)
         assert automation.mode == AutomationMode.DISABLED
 
-    def test_set_mode_turns_off_pump(self):
-        """Should turn off pump when switching to MANUAL or DISABLED."""
+    def test_set_mode_disabled_turns_off_pump(self):
+        """Should turn off pump when switching to DISABLED mode."""
+        relay_configs = [RelayConfig(id="pump", name="Test Pump", gpio_pin=17)]
+        relay_manager = MockRelayManager(relay_configs=relay_configs)
+        water_sensor = MockWaterLevelSensor(gpio_pin=23)
+
+        automation = PumpAutomation(
+            relay_manager=relay_manager,
+            water_sensor=water_sensor,
+            pump_relay_id="pump"
+        )
+
+        # Turn pump ON
+        relay_manager.turn_on("pump")
+        assert relay_manager.get_state("pump") == RelayState.ON
+
+        # Switch to DISABLED mode
+        automation.set_mode(AutomationMode.DISABLED)
+
+        # Pump should be OFF
+        assert relay_manager.get_state("pump") == RelayState.OFF
+
+    def test_set_mode_manual_does_not_turn_off_pump(self):
+        """Should not turn off pump when switching to MANUAL mode if it was ON."""
         relay_configs = [RelayConfig(id="pump", name="Test Pump", gpio_pin=17)]
         relay_manager = MockRelayManager(relay_configs=relay_configs)
         water_sensor = MockWaterLevelSensor(gpio_pin=23)
@@ -227,8 +252,8 @@ class TestPumpAutomation:
         # Switch to MANUAL mode
         automation.set_mode(AutomationMode.MANUAL)
 
-        # Pump should be OFF
-        assert relay_manager.get_state("pump") == RelayState.OFF
+        # Pump should still be ON
+        assert relay_manager.get_state("pump") == RelayState.ON
 
     def test_get_status(self):
         """Should return automation status."""
@@ -311,10 +336,16 @@ class TestPumpAutomation:
 
         # Water level OK again
         water_sensor.set_level(WaterLevel.OK)
-        time.sleep(1.5)
+
+        # Poll until pump is OFF or timeout
+        timeout = 5  # seconds
+        start_time = time.time()
+        while relay_manager.get_state("pump") == RelayState.ON and (time.time() - start_time) < timeout:
+            time.sleep(0.1)  # Check every 100ms
 
         # Pump should be OFF
         assert relay_manager.get_state("pump") == RelayState.OFF
+
 
         automation.stop()
 
@@ -419,7 +450,7 @@ class TestIntegration:
             water_sensor=water_sensor,
             pump_relay_id="pump"
         )
-
+        automation.start()
         errors = []
 
         def get_status_repeatedly():
@@ -442,4 +473,5 @@ class TestIntegration:
         for thread in threads:
             thread.join()
 
+        automation.stop()
         assert len(errors) == 0

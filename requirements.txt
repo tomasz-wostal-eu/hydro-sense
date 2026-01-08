@@ -16,7 +16,6 @@ python-dotenv==1.0.1
 aiomqtt==2.0.1
 
 # GPIO control for relays and sensors
-RPi.GPIO==0.7.1
 
 # LED hardware control (already installed, listed for completeness)
 # rpi-ws281x==5.0.0

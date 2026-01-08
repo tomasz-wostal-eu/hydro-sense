@@ -539,7 +539,31 @@ async def lifespan(app: FastAPI):
         except asyncio.CancelledError:
             logger.info("MQTT service stopped")
 
-    # 5. Turn off LEDs
+    # 5. Stop pump automation
+    if pump_automation:
+        try:
+            logger.info("Stopping pump automation")
+            await asyncio.to_thread(pump_automation.stop)
+        except Exception as e:
+            logger.error("Failed to stop pump automation during shutdown", exc_info=True)
+
+    # 6. Cleanup water level sensor
+    if water_sensor:
+        try:
+            logger.info("Cleaning up water level sensor")
+            await asyncio.to_thread(water_sensor.cleanup)
+        except Exception as e:
+            logger.error("Failed to cleanup water sensor during shutdown", exc_info=True)
+
+    # 7. Cleanup relays
+    if relay_manager:
+        try:
+            logger.info("Cleaning up relays")
+            await asyncio.to_thread(relay_manager.cleanup)
+        except Exception as e:
+            logger.error("Failed to cleanup relays during shutdown", exc_info=True)
+
+    # 8. Turn off LEDs
     try:
         logger.info("Turning off LEDs")
         leds.off()
@@ -846,7 +870,7 @@ async def sunrise_auto(req: SolarRequest):
     except ValueError as e:
         # Astral library error for extreme locations (polar regions, etc.)
         error_msg = str(e)
-        if "never reaches" in error_msg.lower() or "domain error" in error_msg.lower():
+        if "never reaches" in error_msg.lower() or "domain error" in error_msg.lower() or "polar region" in error_msg.lower():
             logger.warning(f"Cannot calculate sunrise for location: lat={req.latitude}, lon={req.longitude}, error={error_msg}")
             raise HTTPException(
                 status_code=400,
@@ -899,7 +923,7 @@ async def sunset_auto(req: SolarRequest):
     except ValueError as e:
         # Astral library error for extreme locations (polar regions, etc.)
         error_msg = str(e)
-        if "never reaches" in error_msg.lower() or "domain error" in error_msg.lower():
+        if "never reaches" in error_msg.lower() or "domain error" in error_msg.lower() or "polar region" in error_msg.lower():
             logger.warning(f"Cannot calculate sunset for location: lat={req.latitude}, lon={req.longitude}, error={error_msg}")
             raise HTTPException(
                 status_code=400,
@@ -1397,6 +1421,8 @@ async def get_all_relays():
             "count": 1
         }
     """
+    if not RELAY_ENABLED:
+        raise HTTPException(status_code=503, detail="Relay control not enabled")
     if not relay_manager:
         raise HTTPException(status_code=503, detail="Relay control not enabled")
 
@@ -1429,6 +1455,8 @@ async def get_relay(relay_id: str):
             "default_state": "OFF"
         }
     """
+    if not RELAY_ENABLED:
+        raise HTTPException(status_code=503, detail="Relay control not enabled")
     if not relay_manager:
         raise HTTPException(status_code=503, detail="Relay control not enabled")
 
@@ -1457,6 +1485,8 @@ async def turn_relay_on(relay_id: str):
             "changed": true
         }
     """
+    if not RELAY_ENABLED:
+        raise HTTPException(status_code=503, detail="Relay control not enabled")
     if not relay_manager:
         raise HTTPException(status_code=503, detail="Relay control not enabled")
 
@@ -1466,6 +1496,7 @@ async def turn_relay_on(relay_id: str):
 
         # Publish state to MQTT if enabled
         if MQTT_ENABLED and RELAY_ENABLED:
+            from app.mqtt_client import publish_relay_state_to_mqtt
             from app.relay import RelayState
             await publish_relay_state_to_mqtt(relay_id, new_state)
 
@@ -1496,6 +1527,8 @@ async def turn_relay_off(relay_id: str):
             "changed": true
         }
     """
+    if not RELAY_ENABLED:
+        raise HTTPException(status_code=503, detail="Relay control not enabled")
     if not relay_manager:
         raise HTTPException(status_code=503, detail="Relay control not enabled")
 
@@ -1505,6 +1538,7 @@ async def turn_relay_off(relay_id: str):
 
         # Publish state to MQTT if enabled
         if MQTT_ENABLED and RELAY_ENABLED:
+            from app.mqtt_client import publish_relay_state_to_mqtt
             from app.relay import RelayState
             await publish_relay_state_to_mqtt(relay_id, new_state)
 
@@ -1535,6 +1569,8 @@ async def toggle_relay(relay_id: str):
             "previous_state": "OFF"
         }
     """
+    if not RELAY_ENABLED:
+        raise HTTPException(status_code=503, detail="Relay control not enabled")
     if not relay_manager:
         raise HTTPException(status_code=503, detail="Relay control not enabled")
 
@@ -1544,6 +1580,7 @@ async def toggle_relay(relay_id: str):
 
         # Publish state to MQTT if enabled
         if MQTT_ENABLED and RELAY_ENABLED:
+            from app.mqtt_client import publish_relay_state_to_mqtt
             from app.relay import RelayState
             await publish_relay_state_to_mqtt(relay_id, new_state)
 
@@ -1575,6 +1612,8 @@ async def set_relay_state(relay_id: str, request: RelayStateRequest):
             "changed": true
         }
     """
+    if not RELAY_ENABLED:
+        raise HTTPException(status_code=503, detail="Relay control not enabled")
     if not relay_manager:
         raise HTTPException(status_code=503, detail="Relay control not enabled")
 
@@ -1587,6 +1626,7 @@ async def set_relay_state(relay_id: str, request: RelayStateRequest):
 
         # Publish state to MQTT if enabled
         if MQTT_ENABLED and RELAY_ENABLED:
+            from app.mqtt_client import publish_relay_state_to_mqtt
             await publish_relay_state_to_mqtt(relay_id, new_state)
 
         return {
@@ -1639,8 +1679,10 @@ async def get_water_level():
             "gpio_state": true/false/null
         }
     """
-    if not water_sensor:
+    if not WATER_LEVEL_ENABLED:
         raise HTTPException(status_code=503, detail="Water level sensor not enabled")
+    if not water_sensor:
+        raise HTTPException(status_code=500, detail="Water level sensor not initialized. Check server logs for errors.")
 
     try:
         return water_sensor.get_info()
@@ -1670,8 +1712,10 @@ async def get_pump_automation_status():
             "next_action_in": 12.3
         }
     """
-    if not pump_automation:
+    if not PUMP_AUTOMATION_ENABLED:
         raise HTTPException(status_code=503, detail="Pump automation not enabled")
+    if not pump_automation:
+        raise HTTPException(status_code=500, detail="Pump automation manager not initialized. Check server logs for errors.")
 
     try:
         return pump_automation.get_status()
@@ -1698,8 +1742,10 @@ async def set_pump_automation_mode(request: AutomationModeRequest):
             "message": "Pump automation mode set to AUTO"
         }
     """
-    if not pump_automation:
+    if not PUMP_AUTOMATION_ENABLED:
         raise HTTPException(status_code=503, detail="Pump automation not enabled")
+    if not pump_automation:
+        raise HTTPException(status_code=500, detail="Pump automation manager not initialized. Check server logs for errors.")
 
     try:
         mode = AutomationMode(request.mode)
@@ -1728,8 +1774,10 @@ async def reset_pump_automation_stats():
     Returns:
         {"message": "Pump automation statistics reset"}
     """
-    if not pump_automation:
+    if not PUMP_AUTOMATION_ENABLED:
         raise HTTPException(status_code=503, detail="Pump automation not enabled")
+    if not pump_automation:
+        raise HTTPException(status_code=500, detail="Pump automation manager not initialized. Check server logs for errors.")
 
     try:
         await asyncio.to_thread(pump_automation.reset_statistics)
@@ -1772,4 +1820,3 @@ async def get_state():
 # ============================================================================
 
 app.include_router(backlight_router)
-

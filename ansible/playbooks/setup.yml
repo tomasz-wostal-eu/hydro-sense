@@ -209,6 +209,14 @@
       become_user: "{{ ansible_user }}"
       tags: dependencies
 
+    - name: Install RPi.GPIO library (for hardware control)
+      pip:
+        name: RPi.GPIO
+        version: "0.7.1"
+        virtualenv: "{{ venv_path }}"
+      become_user: "{{ ansible_user }}"
+      tags: dependencies
+
     - name: Template .env file
       template:
         src: ../templates/env.j2

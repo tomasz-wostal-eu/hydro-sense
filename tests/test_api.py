@@ -7,7 +7,7 @@ import threading
 
 
 @pytest.fixture
-def test_client(disable_mqtt, disable_temperature):
+def test_client(disable_mqtt, disable_temperature, disable_relay, disable_water_level, disable_pump_automation):
     """Create FastAPI test client with mocked dependencies."""
     import tempfile
     from pathlib import Path
@@ -221,3 +221,220 @@ class TestErrorHandling:
         """Should return 404 for nonexistent endpoints."""
         response = test_client.get("/nonexistent/endpoint")
         assert response.status_code == 404
+
+
+# --- Tests for Sunrise/Sunset error handling ---
+class TestSolarEndpointsErrorHandling:
+    """Tests for solar animation endpoint error handling."""
+
+    @patch('app.main.get_sun_times')
+    def test_sunrise_auto_astral_error(self, mock_get_sun_times, test_client):
+        """Should handle Astral ValueError during sunrise calculation."""
+        mock_get_sun_times.side_effect = ValueError("Polar region")
+        payload = {"latitude": 90.0, "longitude": 0.0, "season": "spring"}
+        response = test_client.post("/backlight/sunrise/auto", json=payload)
+        assert response.status_code == 400
+        assert "Cannot calculate sunrise/sunset times" in response.json()["detail"]
+
+    @patch('app.main.get_sun_times')
+    def test_sunset_auto_astral_error(self, mock_get_sun_times, test_client):
+        """Should handle Astral ValueError during sunset calculation."""
+        mock_get_sun_times.side_effect = ValueError("Polar region")
+        payload = {"latitude": 90.0, "longitude": 0.0, "season": "autumn"}
+        response = test_client.post("/backlight/sunset/auto", json=payload)
+        assert response.status_code == 400
+        assert "Cannot calculate sunrise/sunset times" in response.json()["detail"]
+
+    def test_sunrise_auto_invalid_season(self, test_client):
+        """Should reject invalid season for sunrise."""
+        payload = {"latitude": 53.0, "longitude": 18.0, "season": "invalid_season"}
+        response = test_client.post("/backlight/sunrise/auto", json=payload)
+        assert response.status_code == 400
+        assert "Invalid season" in response.json()["detail"]
+
+    def test_sunset_auto_invalid_season(self, test_client):
+        """Should reject invalid season for sunset."""
+        payload = {"latitude": 53.0, "longitude": 18.0, "season": "invalid_season"}
+        response = test_client.post("/backlight/sunset/auto", json=payload)
+        assert response.status_code == 400
+        assert "Invalid season" in response.json()["detail"]
+
+
+# --- Tests for Gradient Preset error handling ---
+class TestGradientPresetErrorHandling:
+    """Tests for gradient preset error handling."""
+
+    @patch('app.main.get_preset', return_value=None)
+    def test_load_preset_not_found(self, mock_get_preset, test_client):
+        """Should return 404 for non-existent preset."""
+        response = test_client.get("/backlight/gradient/preset/nonexistent")
+        assert response.status_code == 404
+        assert "Preset 'nonexistent' not found" in response.json()["detail"]
+
+    @patch('app.main.delete_preset', return_value=False)
+    def test_delete_preset_not_found(self, mock_delete_preset, test_client):
+        """Should return 404 for non-existent preset deletion."""
+        response = test_client.delete("/backlight/gradient/preset/nonexistent")
+        assert response.status_code == 404
+        assert "Preset 'nonexistent' not found" in response.json()["detail"]
+
+
+# --- Tests for Temperature endpoint error handling ---
+class TestTemperatureEndpointsErrorHandling:
+    """Tests for temperature endpoint error handling."""
+
+    @patch('app.main.TEMP_ENABLED', False)
+    def test_get_all_temperatures_disabled(self, test_client):
+        """Should return 503 if temperature sensors are disabled."""
+        response = test_client.get("/temperature")
+        assert response.status_code == 503
+        assert "Temperature sensors not enabled" in response.json()["detail"]
+
+    @patch('app.main.TEMP_ENABLED', True)
+    @patch('app.main.temp_manager', None)
+    def test_get_all_temperatures_manager_none(self, test_client):
+        """Should return 503 if temp_manager is None despite TEMP_ENABLED."""
+        response = test_client.get("/temperature")
+        assert response.status_code == 503
+        assert "Temperature sensors not enabled" in response.json()["detail"]
+
+    @patch('app.main.TEMP_ENABLED', True)
+    @patch('app.main.temp_manager')
+    def test_get_sensor_temperature_not_found(self, mock_temp_manager, test_client):
+        """Should return 404 for non-existent temperature sensor."""
+        mock_temp_manager.read_sensor.return_value = None
+        response = test_client.get("/temperature/nonexistent_sensor")
+        assert response.status_code == 404
+        assert "Sensor nonexistent_sensor not found" in response.json()["detail"]
+
+    @patch('app.main.TEMP_ENABLED', False)
+    def test_discover_sensors_disabled(self, test_client):
+        """Should return 503 if temperature sensors are disabled."""
+        response = test_client.get("/temperature/sensors/discover")
+        assert response.status_code == 503
+        assert "Temperature sensors not enabled" in response.json()["detail"]
+
+    @patch('app.main.TEMP_ENABLED', False)
+    def test_list_sensors_disabled(self, test_client):
+        """Should return 503 if temperature sensors are disabled."""
+        response = test_client.get("/temperature/sensors/list")
+        assert response.status_code == 503
+        assert "Temperature sensors not enabled" in response.json()["detail"]
+
+
+# --- Tests for Relay endpoint error handling ---
+class TestRelayEndpointsErrorHandling:
+    """Tests for relay endpoint error handling."""
+
+    @patch('app.main.RELAY_ENABLED', False)
+    def test_get_all_relays_disabled(self, test_client):
+        """Should return 503 if relay control is disabled."""
+        response = test_client.get("/relay")
+        assert response.status_code == 503
+        assert "Relay control not enabled" in response.json()["detail"]
+
+    @patch('app.main.RELAY_ENABLED', True)
+    @patch('app.main.relay_manager', None)
+    def test_get_all_relays_manager_none(self, test_client):
+        """Should return 503 if relay_manager is None despite RELAY_ENABLED."""
+        response = test_client.get("/relay")
+        assert response.status_code == 503
+        assert "Relay control not enabled" in response.json()["detail"]
+
+    @patch('app.main.RELAY_ENABLED', True)
+    @patch('app.main.relay_manager')
+    def test_get_relay_not_found(self, mock_relay_manager, test_client):
+        """Should return 404 for non-existent relay."""
+        mock_relay_manager.get_relay_info.side_effect = KeyError
+        response = test_client.get("/relay/nonexistent_relay")
+        assert response.status_code == 404
+        assert "Relay 'nonexistent_relay' not found" in response.json()["detail"]
+
+    @patch('app.main.RELAY_ENABLED', False)
+    def test_turn_relay_on_disabled(self, test_client):
+        """Should return 503 if relay control is disabled."""
+        response = test_client.post("/relay/pump/on")
+        assert response.status_code == 503
+
+    @patch('app.main.RELAY_ENABLED', True)
+    @patch('app.main.relay_manager')
+    def test_turn_relay_on_not_found(self, mock_relay_manager, test_client):
+        """Should return 404 for non-existent relay on turn_on."""
+        mock_relay_manager.turn_on.side_effect = KeyError
+        response = test_client.post("/relay/nonexistent_relay/on")
+        assert response.status_code == 404
+
+    @patch('app.main.RELAY_ENABLED', False)
+    def test_turn_relay_off_disabled(self, test_client):
+        """Should return 503 if relay control is disabled."""
+        response = test_client.post("/relay/pump/off")
+        assert response.status_code == 503
+
+    @patch('app.main.RELAY_ENABLED', True)
+    @patch('app.main.relay_manager')
+    def test_turn_relay_off_not_found(self, mock_relay_manager, test_client):
+        """Should return 404 for non-existent relay on turn_off."""
+        mock_relay_manager.turn_off.side_effect = KeyError
+        response = test_client.post("/relay/nonexistent_relay/off")
+        assert response.status_code == 404
+
+    @patch('app.main.RELAY_ENABLED', False)
+    def test_toggle_relay_disabled(self, test_client):
+        """Should return 503 if relay control is disabled."""
+        response = test_client.post("/relay/pump/toggle")
+        assert response.status_code == 503
+
+    @patch('app.main.RELAY_ENABLED', True)
+    @patch('app.main.relay_manager')
+    def test_toggle_relay_not_found(self, mock_relay_manager, test_client):
+        """Should return 404 for non-existent relay on toggle."""
+        mock_relay_manager.get_state.side_effect = KeyError
+        mock_relay_manager.toggle.side_effect = KeyError
+        response = test_client.post("/relay/nonexistent_relay/toggle")
+        assert response.status_code == 404
+
+    @patch('app.main.RELAY_ENABLED', False)
+    def test_set_relay_state_disabled(self, test_client):
+        """Should return 503 if relay control is disabled."""
+        response = test_client.post("/relay/pump", json={"state": "ON"})
+        assert response.status_code == 503
+
+    @patch('app.main.RELAY_ENABLED', True)
+    @patch('app.main.relay_manager')
+    def test_set_relay_state_not_found(self, mock_relay_manager, test_client):
+        """Should return 404 for non-existent relay on set_state."""
+        mock_relay_manager.set_state.side_effect = KeyError
+        response = test_client.post("/relay/nonexistent_relay", json={"state": "ON"})
+        assert response.status_code == 404
+
+
+# --- Tests for Water Level & Pump Automation endpoint error handling ---
+class TestWaterPumpEndpointsErrorHandling:
+    """Tests for water level and pump automation endpoint error handling."""
+
+    @patch('app.main.WATER_LEVEL_ENABLED', False)
+    def test_get_water_level_disabled(self, test_client):
+        """Should return 503 if water level sensor is disabled."""
+        response = test_client.get("/water-level")
+        assert response.status_code == 503
+        assert "Water level sensor not enabled" in response.json()["detail"]
+
+    @patch('app.main.PUMP_AUTOMATION_ENABLED', False)
+    def test_get_pump_automation_status_disabled(self, test_client):
+        """Should return 503 if pump automation is disabled."""
+        response = test_client.get("/pump-automation")
+        assert response.status_code == 503
+        assert "Pump automation not enabled" in response.json()["detail"]
+
+    @patch('app.main.PUMP_AUTOMATION_ENABLED', False)
+    def test_set_pump_automation_mode_disabled(self, test_client):
+        """Should return 503 if pump automation is disabled."""
+        payload = {"mode": "AUTO"}
+        response = test_client.post("/pump-automation/mode", json=payload)
+        assert response.status_code == 503
+
+    @patch('app.main.PUMP_AUTOMATION_ENABLED', False)
+    def test_reset_pump_automation_stats_disabled(self, test_client):
+        """Should return 503 if pump automation is disabled."""
+        response = test_client.post("/pump-automation/reset-stats")
+        assert response.status_code == 503

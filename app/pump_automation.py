@@ -93,7 +93,7 @@ class PumpAutomation:
         self.automation_thread = threading.Thread(
             target=self._automation_loop,
             name="PumpAutomation",
-            daemon=True
+            daemon=False
         )
         self.automation_thread.start()
         logger.info("Pump automation started")

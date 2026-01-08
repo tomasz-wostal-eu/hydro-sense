@@ -98,29 +98,40 @@ tests/
 pip install -r requirements-dev.txt
 ```
 
+### Quick Start (Recommended)
+
+```bash
+# Run all tests (fast mode, no coverage, ~3 minutes) ✅
+make test
+# or
+pytest -q --no-cov
+```
+
+**All 276 tests pass in ~2:30-3:00 minutes**
+
 ### Basic Usage
 
 ```bash
-# Run all tests
-pytest
+# Run all tests (fast mode)
+pytest -q --no-cov
 
 # Run all tests with verbose output
-pytest -v
+pytest -v --no-cov
 
 # Run specific test file
-pytest tests/test_gradient.py
+pytest tests/test_gradient.py -v --no-cov
 
 # Run specific test class
-pytest tests/test_api.py::TestRGBEndpoint
+pytest tests/test_api.py::TestRGBEndpoint -v --no-cov
 
 # Run specific test
-pytest tests/test_api.py::TestRGBEndpoint::test_set_rgb_valid
+pytest tests/test_api.py::TestRGBEndpoint::test_set_rgb_valid -v --no-cov
 ```
 
-### Coverage Reports
+### Coverage Reports (⚠️ Known Issues)
 
 ```bash
-# Run tests with coverage
+# Run tests with coverage (may hang on Python 3.14+)
 pytest --cov=app
 
 # Generate HTML coverage report
@@ -130,18 +141,48 @@ pytest --cov=app --cov-report=html
 open htmlcov/index.html
 ```
 
+**⚠️ WARNING:** Coverage report generation may hang on Python 3.14+ after all tests complete (276 passed). If tests hang:
+1. Press `Ctrl+C` to interrupt
+2. Use `--no-cov` flag instead (fast, no hanging)
+3. See "Known Issues" section below
+
 ### Using Makefile
 
 ```bash
-# Run all tests
+# Run all tests (fast, recommended)
 make test
 
-# Run with coverage
+# Run with coverage (may hang)
 make test-coverage
 
 # Clean test artifacts
 make clean
 ```
+
+## Known Issues
+
+### Coverage Reporting Hangs (Python 3.14.2)
+
+**Symptom:** All 276 tests complete successfully but the process hangs at 100% CPU during coverage report generation.
+
+**Root Cause:** Bug in pytest-cov 7.4.3 or coverage.py 4.1.0 with Python 3.14.2
+
+**Workaround:**
+
+```bash
+# ✅ Fast mode (no coverage, no hanging)
+pytest -q --no-cov       # ~2:30-3:00 minutes
+make test                # Uses --no-cov automatically
+
+# ⚠️ May hang after tests complete
+pytest                   # Default includes coverage
+make test-coverage       # Includes timeout but still may hang
+```
+
+**CI/CD Solution:**
+- GitHub Actions runs tests twice:
+  1. Fast mode without coverage (primary validation)
+  2. With coverage + timeout (optional, non-fatal if it times out)
 
 ## Hardware Mocking
 

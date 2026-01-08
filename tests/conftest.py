@@ -40,6 +40,8 @@ sys.modules['RPi.GPIO'] = MagicMock()
 
 # Now we can import app modules safely
 
+# Now we can import app modules safely
+
 
 @pytest.fixture
 def mock_mqtt():
@@ -59,4 +61,25 @@ def disable_mqtt():
 def disable_temperature():
     """Disable temperature sensors for tests that don't need them."""
     with patch('app.config.TEMP_ENABLED', False):
+        yield
+
+
+@pytest.fixture
+def disable_relay():
+    """Disable relay control for tests that don't need it."""
+    with patch('app.config.RELAY_ENABLED', False):
+        yield
+
+
+@pytest.fixture
+def disable_water_level():
+    """Disable water level sensor for tests that don't need it."""
+    with patch('app.config.WATER_LEVEL_ENABLED', False):
+        yield
+
+
+@pytest.fixture
+def disable_pump_automation():
+    """Disable pump automation for tests that don't need it."""
+    with patch('app.config.PUMP_AUTOMATION_ENABLED', False):
         yield
