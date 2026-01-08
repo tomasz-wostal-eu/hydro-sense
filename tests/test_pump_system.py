@@ -282,6 +282,7 @@ class TestPumpAutomation:
         assert status["cycle_count"] == 0
         assert status["total_runtime"] == 0.0
 
+    @pytest.mark.background_threads
     def test_automation_starts_pump_on_low_water(self):
         """Should start pump when water level is LOW in AUTO mode."""
         relay_configs = [RelayConfig(id="pump", name="Test Pump", gpio_pin=17)]
@@ -311,6 +312,7 @@ class TestPumpAutomation:
         # Cleanup
         automation.stop()
 
+    @pytest.mark.background_threads
     def test_automation_stops_pump_on_water_ok(self):
         """Should stop pump when water level returns to OK."""
         relay_configs = [RelayConfig(id="pump", name="Test Pump", gpio_pin=17)]
@@ -370,6 +372,7 @@ class TestPumpAutomation:
         assert automation.cycle_count == 0
         assert automation.total_runtime == 0.0
 
+    @pytest.mark.background_threads
     def test_manual_mode_disables_automation(self):
         """Should not control pump when in MANUAL mode."""
         relay_configs = [RelayConfig(id="pump", name="Test Pump", gpio_pin=17)]
@@ -400,6 +403,7 @@ class TestPumpAutomation:
 class TestIntegration:
     """Integration tests for complete pump automation system."""
 
+    @pytest.mark.background_threads
     def test_full_cycle(self):
         """Should complete full automation cycle."""
         relay_configs = [RelayConfig(id="pump", name="Test Pump", gpio_pin=17)]
@@ -423,22 +427,31 @@ class TestIntegration:
 
         # Water LOW -> pump starts
         water_sensor.set_level(WaterLevel.LOW)
-        time.sleep(2.5)
+
+        # Poll until pump is ON or timeout
+        timeout = 5
+        start_time = time.time()
+        while relay_manager.get_state("pump") == RelayState.OFF and (time.time() - start_time) < timeout:
+            time.sleep(0.1)
 
         assert relay_manager.get_state("pump") == RelayState.ON
         assert automation.cycle_count >= 1
 
-        # Wait for OFF cycle
-        time.sleep(2.5)
+        # Wait for OFF cycle (poll instead of fixed sleep)
+        start_time = time.time()
+        while relay_manager.get_state("pump") == RelayState.ON and (time.time() - start_time) < timeout:
+            time.sleep(0.1)
+
         assert relay_manager.get_state("pump") == RelayState.OFF
 
         # Water OK -> pump stays off
         water_sensor.set_level(WaterLevel.OK)
-        time.sleep(2.5)
+        time.sleep(1.5)  # Give automation time to react
         assert relay_manager.get_state("pump") == RelayState.OFF
 
         automation.stop()
 
+    @pytest.mark.background_threads
     def test_concurrent_access(self):
         """Should handle concurrent status requests safely."""
         relay_configs = [RelayConfig(id="pump", name="Test Pump", gpio_pin=17)]

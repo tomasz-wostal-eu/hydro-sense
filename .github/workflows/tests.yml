@@ -41,13 +41,13 @@ jobs:
       run: |
         pytest -q --no-cov
 
-    - name: Run tests with coverage (with timeout)
+    - name: Run tests with coverage (skip background thread tests)
       timeout-minutes: 8
       continue-on-error: true
       run: |
-        # Coverage may hang on Python 3.14+, so we use timeout
-        timeout 400 pytest --cov=app --cov-report=xml --cov-report=term-missing || \
-          echo "⚠️ Coverage generation timed out (known issue with Python 3.14+)"
+        # Skip tests with background threads to prevent coverage hangs
+        timeout 400 pytest -m "not background_threads" --cov=app --cov-report=xml --cov-report=term-missing || \
+          echo "⚠️ Coverage generation timed out"
 
     - name: Upload coverage to Codecov
       if: hashFiles('coverage.xml') != ''

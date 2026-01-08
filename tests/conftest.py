@@ -83,3 +83,47 @@ def disable_pump_automation():
     """Disable pump automation for tests that don't need it."""
     with patch('app.config.PUMP_AUTOMATION_ENABLED', False):
         yield
+
+
+@pytest.fixture(autouse=True)
+def cleanup_pump_automations():
+    """
+    Auto-cleanup fixture for PumpAutomation instances.
+
+    Ensures all PumpAutomation threads are stopped after each test,
+    even if the test fails before calling stop().
+    """
+    # Track all PumpAutomation instances created during test
+    _created_automations = []
+    original_init = None
+
+    try:
+        from app.pump_automation import PumpAutomation
+        original_init = PumpAutomation.__init__
+
+        def tracked_init(self, *args, **kwargs):
+            """Wrapper that tracks PumpAutomation instances."""
+            original_init(self, *args, **kwargs)
+            _created_automations.append(self)
+
+        PumpAutomation.__init__ = tracked_init
+    except ImportError:
+        pass  # pump_automation not available in this test
+
+    yield
+
+    # Cleanup all tracked automations
+    for automation in _created_automations:
+        try:
+            if hasattr(automation, 'automation_running') and automation.automation_running.is_set():
+                automation.stop()
+        except Exception:
+            pass  # Ignore cleanup errors
+
+    # Restore original __init__
+    if original_init:
+        try:
+            from app.pump_automation import PumpAutomation
+            PumpAutomation.__init__ = original_init
+        except ImportError:
+            pass

@@ -429,12 +429,13 @@ class MockRelay:
 class MockRelayManager:
     """Mock relay manager for testing without GPIO hardware."""
 
-    def __init__(self, relay_configs: List):
+    def __init__(self, relay_configs: List, enable_watchdog: Optional[bool] = None):
         """
         Initialize mock relay manager.
 
         Args:
             relay_configs: List of RelayConfig objects
+            enable_watchdog: Enable watchdog (None=auto-detect pytest, False=disabled, True=enabled)
         """
         self.relays: Dict[str, MockRelay] = {}
         self.lock = threading.Lock()
@@ -446,7 +447,15 @@ class MockRelayManager:
 
         # Start watchdog monitoring if enabled
         from app.config import RELAY_WATCHDOG_ENABLED, RELAY_WATCHDOG_INTERVAL
-        self.watchdog_enabled = RELAY_WATCHDOG_ENABLED
+        import sys
+
+        # Auto-detect pytest - disable watchdog in tests to prevent thread leaks
+        if enable_watchdog is None:
+            is_pytest = 'pytest' in sys.modules
+            self.watchdog_enabled = RELAY_WATCHDOG_ENABLED and not is_pytest
+        else:
+            self.watchdog_enabled = enable_watchdog and RELAY_WATCHDOG_ENABLED
+
         self.watchdog_interval = RELAY_WATCHDOG_INTERVAL
         self.watchdog_running = threading.Event()
         self.watchdog_thread: Optional[threading.Thread] = None
