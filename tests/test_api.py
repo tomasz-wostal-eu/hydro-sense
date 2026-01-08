@@ -174,6 +174,43 @@ class TestPresetEndpoints:
         # May return 200 with preset or 404 if not found
         assert response.status_code in [200, 404]
 
+    @patch('app.main.save_preset')
+    @patch('app.main.validate_gradient_config')
+    def test_save_preset_success(self, mock_validate, mock_save, test_client):
+        """Should save gradient preset."""
+        mock_validate.return_value = None  # No validation errors
+        payload = {
+            "name": "my_custom_gradient",
+            "description": "My cool gradient",
+            "config": {
+                "stops": [
+                    {"position": 0.0, "r": 255, "g": 0, "b": 0},
+                    {"position": 1.0, "r": 0, "g": 0, "b": 255}
+                ],
+                "brightness": 0.8,
+                "animation": None,
+                "speed": 1.0,
+                "direction": "forward"
+            }
+        }
+        response = test_client.post("/backlight/gradient/preset/save", json=payload)
+        assert response.status_code == 200
+        data = response.json()
+        assert data["status"] == "ok"
+        assert data["name"] == "my_custom_gradient"
+        mock_save.assert_called_once()
+
+    @patch('app.main.delete_preset')
+    def test_delete_preset_success(self, mock_delete, test_client):
+        """Should delete gradient preset."""
+        mock_delete.return_value = True  # Successfully deleted
+        response = test_client.delete("/backlight/gradient/preset/my_custom_gradient")
+        assert response.status_code == 200
+        data = response.json()
+        assert data["status"] == "ok"
+        assert data["deleted"] == "my_custom_gradient"
+        mock_delete.assert_called_once_with("my_custom_gradient")
+
 
 class TestSunriseEndpoint:
     """Tests for sunrise animation endpoint."""
@@ -279,6 +316,83 @@ class TestGradientPresetErrorHandling:
         assert "Preset 'nonexistent' not found" in response.json()["detail"]
 
 
+# --- Tests for Temperature endpoints (happy path) ---
+class TestTemperatureEndpoints:
+    """Tests for temperature endpoints when enabled."""
+
+    @patch('app.main.TEMP_ENABLED', True)
+    @patch('app.main.temp_manager')
+    def test_get_all_temperatures_success(self, mock_temp_manager, test_client):
+        """Should return all temperature readings."""
+        from app.temperature import TemperatureReading
+        import time
+        mock_temp_manager.read_all.return_value = {
+            "28-sensor1": TemperatureReading(
+                sensor_id="28-sensor1",
+                celsius=22.5,
+                fahrenheit=72.5,
+                timestamp=time.time(),
+                valid=True,
+                error=None
+            ),
+            "28-sensor2": TemperatureReading(
+                sensor_id="28-sensor2",
+                celsius=23.1,
+                fahrenheit=73.6,
+                timestamp=time.time(),
+                valid=True,
+                error=None
+            ),
+        }
+        response = test_client.get("/temperature")
+        assert response.status_code == 200
+        data = response.json()
+        assert data["count"] == 2
+        assert data["sensors"]["28-sensor1"]["celsius"] == 22.5
+        assert data["sensors"]["28-sensor2"]["celsius"] == 23.1
+
+    @patch('app.main.TEMP_ENABLED', True)
+    @patch('app.main.temp_manager')
+    def test_get_sensor_temperature_success(self, mock_temp_manager, test_client):
+        """Should return specific sensor temperature."""
+        from app.temperature import TemperatureReading
+        import time
+        mock_temp_manager.read_sensor.return_value = TemperatureReading(
+            sensor_id="28-sensor1",
+            celsius=22.5,
+            fahrenheit=72.5,
+            timestamp=time.time(),
+            valid=True,
+            error=None
+        )
+        response = test_client.get("/temperature/28-sensor1")
+        assert response.status_code == 200
+        data = response.json()
+        assert data["celsius"] == 22.5
+        assert data["sensor_id"] == "28-sensor1"
+
+    @patch('app.main.TEMP_ENABLED', True)
+    @patch('app.main.temp_manager')
+    def test_list_sensors_success(self, mock_temp_manager, test_client):
+        """Should return list of sensor IDs."""
+        mock_temp_manager.get_sensor_ids.return_value = ["28-sensor1", "28-sensor2"]
+        response = test_client.get("/temperature/sensors/list")
+        assert response.status_code == 200
+        data = response.json()
+        assert data["sensors"] == ["28-sensor1", "28-sensor2"]
+
+    @patch('app.main.TEMP_ENABLED', True)
+    @patch('app.main.temp_manager')
+    def test_discover_sensors_success(self, mock_temp_manager, test_client):
+        """Should discover new sensors."""
+        mock_temp_manager.refresh_sensors.return_value = ["28-newsensor", "28-newsensor2"]
+        response = test_client.get("/temperature/sensors/discover")
+        assert response.status_code == 200
+        data = response.json()
+        assert data["sensors"] == ["28-newsensor", "28-newsensor2"]
+        assert data["count"] == 2
+
+
 # --- Tests for Temperature endpoint error handling ---
 class TestTemperatureEndpointsErrorHandling:
     """Tests for temperature endpoint error handling."""
@@ -320,6 +434,107 @@ class TestTemperatureEndpointsErrorHandling:
         response = test_client.get("/temperature/sensors/list")
         assert response.status_code == 503
         assert "Temperature sensors not enabled" in response.json()["detail"]
+
+
+# --- Tests for Relay endpoints (happy path) ---
+class TestRelayEndpoints:
+    """Tests for relay endpoints when enabled."""
+
+    @patch('app.main.RELAY_ENABLED', True)
+    @patch('app.main.relay_manager')
+    def test_get_all_relays_success(self, mock_relay_manager, test_client):
+        """Should return all relay info."""
+        from app.relay import RelayState
+        mock_relay_manager.get_all_info.return_value = {
+            "pump": {
+                "id": "pump",
+                "name": "Test Pump",
+                "state": RelayState.OFF,
+                "gpio_pin": 17
+            },
+            "heater": {
+                "id": "heater",
+                "name": "Test Heater",
+                "state": RelayState.OFF,
+                "gpio_pin": 27
+            }
+        }
+        response = test_client.get("/relay")
+        assert response.status_code == 200
+        data = response.json()
+        assert data["count"] == 2
+        assert data["relays"]["pump"]["name"] == "Test Pump"
+        assert data["relays"]["heater"]["name"] == "Test Heater"
+
+    @patch('app.main.RELAY_ENABLED', True)
+    @patch('app.main.relay_manager')
+    def test_get_relay_info_success(self, mock_relay_manager, test_client):
+        """Should return specific relay info."""
+        from app.relay import RelayState
+        mock_relay_manager.get_relay_info.return_value = {
+            "id": "pump",
+            "name": "Aquarium Pump",
+            "state": RelayState.OFF,
+            "gpio_pin": 17
+        }
+        response = test_client.get("/relay/pump")
+        assert response.status_code == 200
+        data = response.json()
+        assert data["id"] == "pump"
+        assert data["name"] == "Aquarium Pump"
+
+    @patch('app.main.RELAY_ENABLED', True)
+    @patch('app.main.relay_manager')
+    def test_turn_relay_on_success(self, mock_relay_manager, test_client):
+        """Should turn relay ON."""
+        from app.relay import RelayState
+        mock_relay_manager.turn_on.return_value = True
+        mock_relay_manager.get_state.return_value = RelayState.ON
+        response = test_client.post("/relay/pump/on")
+        assert response.status_code == 200
+        data = response.json()
+        assert data["relay_id"] == "pump"
+        assert data["state"] == "ON"
+        mock_relay_manager.turn_on.assert_called_once_with("pump")
+
+    @patch('app.main.RELAY_ENABLED', True)
+    @patch('app.main.relay_manager')
+    def test_turn_relay_off_success(self, mock_relay_manager, test_client):
+        """Should turn relay OFF."""
+        from app.relay import RelayState
+        mock_relay_manager.turn_off.return_value = True
+        mock_relay_manager.get_state.return_value = RelayState.OFF
+        response = test_client.post("/relay/pump/off")
+        assert response.status_code == 200
+        data = response.json()
+        assert data["relay_id"] == "pump"
+        assert data["state"] == "OFF"
+        mock_relay_manager.turn_off.assert_called_once_with("pump")
+
+    @patch('app.main.RELAY_ENABLED', True)
+    @patch('app.main.relay_manager')
+    def test_toggle_relay_success(self, mock_relay_manager, test_client):
+        """Should toggle relay state."""
+        from app.relay import RelayState
+        mock_relay_manager.toggle.return_value = RelayState.ON
+        response = test_client.post("/relay/pump/toggle")
+        assert response.status_code == 200
+        data = response.json()
+        assert data["relay_id"] == "pump"
+        assert data["state"] == "ON"
+        mock_relay_manager.toggle.assert_called_once_with("pump")
+
+    @patch('app.main.RELAY_ENABLED', True)
+    @patch('app.main.relay_manager')
+    def test_set_relay_state_success(self, mock_relay_manager, test_client):
+        """Should set relay to specified state."""
+        from app.relay import RelayState
+        mock_relay_manager.get_state.return_value = RelayState.ON
+        response = test_client.post("/relay/pump", json={"state": "ON"})
+        assert response.status_code == 200
+        data = response.json()
+        assert data["relay_id"] == "pump"
+        assert data["state"] == "ON"
 
 
 # --- Tests for Relay endpoint error handling ---
@@ -409,6 +624,78 @@ class TestRelayEndpointsErrorHandling:
 
 
 # --- Tests for Water Level & Pump Automation endpoint error handling ---
+# --- Tests for Water Level and Pump Automation endpoints (happy path) ---
+class TestWaterLevelAndPumpEndpoints:
+    """Tests for water level and pump automation endpoints when enabled."""
+
+    @patch('app.main.WATER_LEVEL_ENABLED', True)
+    @patch('app.main.water_sensor')
+    def test_get_water_level_success(self, mock_water_sensor, test_client):
+        """Should return water level sensor info."""
+        from app.water_level import WaterLevel
+        mock_water_sensor.get_info.return_value = {
+            "gpio_pin": 23,
+            "active_high": True,
+            "current_level": WaterLevel.OK,
+            "last_change": "2026-01-08T12:00:00.000Z",
+            "gpio_state": True
+        }
+        response = test_client.get("/water-level")
+        assert response.status_code == 200
+        data = response.json()
+        assert data["gpio_pin"] == 23
+        assert data["current_level"] == "OK"
+        assert data["active_high"] is True
+
+    @patch('app.main.PUMP_AUTOMATION_ENABLED', True)
+    @patch('app.main.pump_automation')
+    def test_get_pump_automation_status_success(self, mock_pump_automation, test_client):
+        """Should return pump automation status."""
+        from app.pump_automation import AutomationMode
+        from app.water_level import WaterLevel
+        from app.relay import RelayState
+        mock_pump_automation.get_status.return_value = {
+            "mode": AutomationMode.AUTO,
+            "water_level": WaterLevel.OK,
+            "pump_state": RelayState.OFF,
+            "pump_relay_id": "pump",
+            "on_interval": 30,
+            "off_interval": 30,
+            "max_runtime": 300,
+            "cycle_count": 5,
+            "total_runtime": 150.0
+        }
+        response = test_client.get("/pump-automation")
+        assert response.status_code == 200
+        data = response.json()
+        assert data["mode"] == "AUTO"
+        assert data["water_level"] == "OK"
+        assert data["pump_state"] == "OFF"
+        assert data["cycle_count"] == 5
+
+    @patch('app.main.PUMP_AUTOMATION_ENABLED', True)
+    @patch('app.main.pump_automation')
+    def test_set_pump_automation_mode_success(self, mock_pump_automation, test_client):
+        """Should set pump automation mode."""
+        from app.pump_automation import AutomationMode
+        payload = {"mode": "MANUAL"}
+        response = test_client.post("/pump-automation/mode", json=payload)
+        assert response.status_code == 200
+        data = response.json()
+        assert data["mode"] == "MANUAL"
+        mock_pump_automation.set_mode.assert_called_once_with(AutomationMode.MANUAL)
+
+    @patch('app.main.PUMP_AUTOMATION_ENABLED', True)
+    @patch('app.main.pump_automation')
+    def test_reset_pump_automation_stats_success(self, mock_pump_automation, test_client):
+        """Should reset pump automation statistics."""
+        response = test_client.post("/pump-automation/reset-stats")
+        assert response.status_code == 200
+        data = response.json()
+        assert "statistics reset" in data["message"].lower()
+        mock_pump_automation.reset_statistics.assert_called_once()
+
+
 class TestWaterPumpEndpointsErrorHandling:
     """Tests for water level and pump automation endpoint error handling."""
 
